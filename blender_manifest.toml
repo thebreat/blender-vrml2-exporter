@@ -1,0 +1,16 @@
+schema_version = "1.0.0"
+
+id = "io_scene_vrml2_export"
+version = "0.2.0"
+name = "VRML2 Exporter"
+tagline = "Export mesh objects to VRML2 with colors and textures"
+maintainer = "B. O'Leary"
+website = "https://github.com/thebreat/blender-vrml2-exporter"
+type = "add-on"
+
+tags = ["Import-Export"]
+blender_version_min = "4.2.0"
+license = ["SPDX:GPL-2.0-or-later"]
+
+[permissions]
+files = "Write .wrl files and optionally copy referenced texture files"

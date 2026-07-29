@@ -1,0 +1,21 @@
+# Changelog
+
+All notable changes to this maintained fork are recorded here.
+
+## 0.2.0 - 2026-07-17
+
+- Converted the package from Blender's legacy add-on format to the current Blender Extension format.
+- Added `blender_manifest.toml` and removed legacy `bl_info` metadata.
+- Set the minimum supported Blender version to 4.2, the first release family with the Extensions system.
+- Removed the inherited `OFFICIAL` support claim and replaced it with community-maintained metadata.
+- Preserved evaluated mesh data layers when exporting with modifiers.
+- Added safer handling for point- and corner-domain color attributes.
+- Preserved per-corner colors by writing an explicit VRML `colorIndex` where needed.
+- Improved texture path normalization, quoting, and duplicate URL removal.
+- Added Blender-visible error reporting and a no-mesh warning.
+- Added cross-platform installation, usage, maintenance, and release documentation.
+- Removed generated cache files and macOS archive metadata from the distributable package.
+
+## 0.1.0
+
+- Earlier community port of the original VRML2 exporter.
