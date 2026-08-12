@@ -6,7 +6,10 @@
 
 """VRML 2.0 mesh writer used by the Blender export operator."""
 
+import hashlib
+import io
 import os
+import tempfile
 
 import bmesh
 import bpy
@@ -128,6 +131,186 @@ def _write_face_indices(fw, faces, index_for_loop):
         fw("-1 ")
 
 
+def _write_indexed_face_set(
+    fw,
+    bm,
+    use_color,
+    color_type,
+    material_colors,
+    color_domain,
+    color_layer,
+    use_uv,
+):
+    """Write the reusable geometry portion of a VRML Shape node."""
+    fw("IndexedFaceSet {\n")
+    fw("\tcoord Coordinate {\n")
+    fw("\t\tpoint [ ")
+    for vertex in bm.verts:
+        fw("%.6f %.6f %.6f " % tuple(vertex.co[:3]))
+    fw("]\n")
+    fw("\t}\n")
+
+    if use_color:
+        if color_type == "MATERIAL":
+            fw("\tcolorPerVertex FALSE\n")
+            fw("\tcolor Color {\n")
+            fw("\t\tcolor [ ")
+            for color in material_colors:
+                fw("%.4f %.4f %.4f " % color)
+            fw("]\n")
+            fw("\t}\n")
+
+            fw("\tcolorIndex [ ")
+            for face in bm.faces:
+                material_index = face.material_index
+                if material_index >= len(material_colors):
+                    material_index = 0
+                fw(f"{material_index} ")
+            fw("]\n")
+
+        elif color_type == "VERTEX":
+            fw("\tcolorPerVertex TRUE\n")
+            fw("\tcolor Color {\n")
+            fw("\t\tcolor [ ")
+
+            if color_domain == "POINT":
+                for vertex in bm.verts:
+                    fw("%.4f %.4f %.4f " % tuple(vertex[color_layer][:3]))
+            else:
+                for face in bm.faces:
+                    for loop in face.loops:
+                        fw("%.4f %.4f %.4f " % tuple(loop[color_layer][:3]))
+
+            fw("]\n")
+            fw("\t}\n")
+
+            if color_domain == "CORNER":
+                fw("\tcolorIndex [ ")
+                color_index = 0
+                for face in bm.faces:
+                    for _loop in face.loops:
+                        fw(f"{color_index} ")
+                        color_index += 1
+                    fw("-1 ")
+                fw("]\n")
+
+    if use_uv:
+        uv_layer = bm.loops.layers.uv.active
+        fw("\ttexCoord TextureCoordinate {\n")
+        fw("\t\tpoint [ ")
+        for face in bm.faces:
+            for loop in face.loops:
+                fw("%.6f %.6f " % tuple(loop[uv_layer].uv[:2]))
+        fw("]\n")
+        fw("\t}\n")
+
+        fw("\ttexCoordIndex [ ")
+        texture_index = 0
+        for face in bm.faces:
+            for _loop in face.loops:
+                fw(f"{texture_index} ")
+                texture_index += 1
+            fw("-1 ")
+        fw("]\n")
+
+    fw("\tcoordIndex [ ")
+    _write_face_indices(fw, bm.faces, lambda loop: loop.vert.index)
+    fw("]\n")
+    fw("}\n")
+
+
+def _indent_after_first_line(text, indent):
+    """Indent a generated VRML block while keeping its first line inline."""
+    lines = text.splitlines(keepends=True)
+    if not lines:
+        return text
+    return lines[0] + "".join(indent + line for line in lines[1:])
+
+
+def _decompose_vrml_transform(matrix):
+    """Return a VRML-compatible transform, or None for shear/reflection cases."""
+    translation, rotation, scale = matrix.decompose()
+    if any(component <= 0.0 for component in scale):
+        return None
+
+    rotation_matrix = rotation.to_matrix()
+    magnitude = max(1.0, *(abs(value) for row in matrix for value in row))
+    tolerance = 1.0e-5 * magnitude
+    for row in range(4):
+        for column in range(4):
+            if row < 3 and column < 3:
+                expected = rotation_matrix[row][column] * scale[column]
+            elif row < 3 and column == 3:
+                expected = translation[row]
+            else:
+                expected = 1.0 if row == column else 0.0
+            if abs(matrix[row][column] - expected) > tolerance:
+                return None
+
+    axis, angle = rotation.to_axis_angle()
+    if abs(angle) < 1.0e-10:
+        axis = (0.0, 0.0, 1.0)
+        angle = 0.0
+
+    return tuple(translation), tuple(axis), angle, tuple(scale)
+
+
+def _write_transform_start(fw, transform):
+    translation, axis, angle, scale = transform
+    fw("Transform {\n")
+    fw("\ttranslation %.6f %.6f %.6f\n" % translation)
+    fw("\trotation %.6f %.6f %.6f %.6f\n" % (*axis, angle))
+    fw("\tscale %.6f %.6f %.6f\n" % scale)
+    fw("\tchildren [\n")
+
+
+def _remove_unused_geometry_defs(filepath, geometry_cache):
+    """Remove DEF names that were never referenced by a USE statement."""
+    unused_names = {
+        entry["name"]
+        for entry in geometry_cache.values()
+        if entry["occurrences"] == 1
+    }
+    if not unused_names:
+        return
+
+    output_directory = os.path.dirname(os.path.abspath(filepath)) or os.getcwd()
+    fd, temporary_path = tempfile.mkstemp(
+        prefix=".vrml2-export-",
+        suffix=".wrl",
+        dir=output_directory,
+        text=True,
+    )
+    try:
+        with open(filepath, "r", encoding="utf-8", newline="") as source_file:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="") as output_file:
+                for line in source_file:
+                    for geometry_name in unused_names:
+                        marker = f"geometry DEF {geometry_name} "
+                        if marker in line:
+                            line = line.replace(marker, "geometry ", 1)
+                            break
+                    output_file.write(line)
+        os.replace(temporary_path, filepath)
+    except Exception:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        try:
+            os.unlink(temporary_path)
+        except OSError:
+            pass
+        raise
+
+
+def _mesh_data_identity(obj):
+    """Return an export-session identity for an object's original mesh data."""
+    mesh = obj.data
+    as_pointer = getattr(mesh, "as_pointer", None)
+    return as_pointer() if as_pointer is not None else id(mesh)
+
+
 def save_bmesh(
     fw,
     bm,
@@ -141,12 +324,15 @@ def save_bmesh(
     uv_image,
     path_mode,
     copy_set,
+    geometry_cache=None,
+    geometry_group=None,
+    indent="",
 ):
     """Write one triangulated BMesh as a VRML Shape node."""
     base_src = os.path.dirname(bpy.data.filepath) or os.getcwd()
 
-    fw("Shape {\n")
-    fw("\tappearance Appearance {\n")
+    fw(f"{indent}Shape {{\n")
+    fw(f"{indent}\tappearance Appearance {{\n")
     if use_uv:
         filepath = uv_image.filepath
         filepath_full = os.path.normpath(
@@ -168,91 +354,55 @@ def save_bmesh(
             image_urls.append(filepath_full)
         image_urls = _unique_strings(image_urls)
 
-        fw("\t\ttexture ImageTexture {\n")
-        fw("\t\t\turl [ %s ]\n" % " ".join(_vrml_quote(url) for url in image_urls))
-        fw("\t\t}\n")
+        fw(f"{indent}\t\ttexture ImageTexture {{\n")
+        fw(
+            f"{indent}\t\t\turl [ %s ]\n"
+            % " ".join(_vrml_quote(url) for url in image_urls)
+        )
+        fw(f"{indent}\t\t}}\n")
     else:
-        fw("\t\tmaterial Material {\n")
-        fw("\t\t}\n")
-    fw("\t}\n")
+        fw(f"{indent}\t\tmaterial Material {{\n")
+        fw(f"{indent}\t\t}}\n")
+    fw(f"{indent}\t}}\n")
 
-    fw("\tgeometry IndexedFaceSet {\n")
-    fw("\t\tcoord Coordinate {\n")
-    fw("\t\t\tpoint [ ")
-    for vertex in bm.verts:
-        fw("%.6f %.6f %.6f " % tuple(vertex.co[:3]))
-    fw("]\n")
-    fw("\t\t}\n")
+    geometry_buffer = io.StringIO()
+    _write_indexed_face_set(
+        geometry_buffer.write,
+        bm,
+        use_color,
+        color_type,
+        material_colors,
+        color_domain,
+        color_layer,
+        use_uv,
+    )
+    geometry_text = geometry_buffer.getvalue()
+    geometry_indent = f"{indent}\t"
+    reused = False
 
-    if use_color:
-        if color_type == "MATERIAL":
-            fw("\t\tcolorPerVertex FALSE\n")
-            fw("\t\tcolor Color {\n")
-            fw("\t\t\tcolor [ ")
-            for color in material_colors:
-                fw("%.4f %.4f %.4f " % color)
-            fw("]\n")
-            fw("\t\t}\n")
+    if geometry_cache is None:
+        fw(f"{geometry_indent}geometry ")
+        fw(_indent_after_first_line(geometry_text, geometry_indent))
+    else:
+        geometry_digest = hashlib.sha256(geometry_text.encode("utf-8")).digest()
+        cache_key = (geometry_group, geometry_digest)
+        cache_entry = geometry_cache.get(cache_key)
+        if cache_entry is None:
+            geometry_name = f"Geometry_{len(geometry_cache) + 1}"
+            geometry_cache[cache_key] = {
+                "name": geometry_name,
+                "occurrences": 1,
+            }
+            fw(f"{geometry_indent}geometry DEF {geometry_name} ")
+            fw(_indent_after_first_line(geometry_text, geometry_indent))
+        else:
+            geometry_name = cache_entry["name"]
+            cache_entry["occurrences"] += 1
+            fw(f"{geometry_indent}geometry USE {geometry_name}\n")
+            reused = True
 
-            fw("\t\tcolorIndex [ ")
-            for face in bm.faces:
-                material_index = face.material_index
-                if material_index >= len(material_colors):
-                    material_index = 0
-                fw(f"{material_index} ")
-            fw("]\n")
-
-        elif color_type == "VERTEX":
-            fw("\t\tcolorPerVertex TRUE\n")
-            fw("\t\tcolor Color {\n")
-            fw("\t\t\tcolor [ ")
-
-            if color_domain == "POINT":
-                for vertex in bm.verts:
-                    fw("%.4f %.4f %.4f " % tuple(vertex[color_layer][:3]))
-            else:
-                for face in bm.faces:
-                    for loop in face.loops:
-                        fw("%.4f %.4f %.4f " % tuple(loop[color_layer][:3]))
-
-            fw("]\n")
-            fw("\t\t}\n")
-
-            if color_domain == "CORNER":
-                fw("\t\tcolorIndex [ ")
-                color_index = 0
-                for face in bm.faces:
-                    for _loop in face.loops:
-                        fw(f"{color_index} ")
-                        color_index += 1
-                    fw("-1 ")
-                fw("]\n")
-
-    if use_uv:
-        uv_layer = bm.loops.layers.uv.active
-        fw("\t\ttexCoord TextureCoordinate {\n")
-        fw("\t\t\tpoint [ ")
-        for face in bm.faces:
-            for loop in face.loops:
-                fw("%.6f %.6f " % tuple(loop[uv_layer].uv[:2]))
-        fw("]\n")
-        fw("\t\t}\n")
-
-        fw("\t\ttexCoordIndex [ ")
-        texture_index = 0
-        for face in bm.faces:
-            for _loop in face.loops:
-                fw(f"{texture_index} ")
-                texture_index += 1
-            fw("-1 ")
-        fw("]\n")
-
-    fw("\t\tcoordIndex [ ")
-    _write_face_indices(fw, bm.faces, lambda loop: loop.vert.index)
-    fw("]\n")
-
-    fw("\t}\n")
-    fw("}\n")
+    fw(f"{indent}}}\n")
+    return reused
 
 
 def save_object(
@@ -266,6 +416,8 @@ def save_object(
     use_uv,
     path_mode,
     copy_set,
+    geometry_cache,
+    geometry_group,
 ):
     """Evaluate and export a single mesh object."""
     if obj.type != "MESH":
@@ -296,7 +448,14 @@ def save_object(
 
         bmesh.ops.triangulate(bm, faces=list(bm.faces))
         object_matrix = obj_eval.matrix_world if obj_eval is not None else obj.matrix_world
-        bm.transform(global_matrix @ object_matrix)
+        export_matrix = global_matrix @ object_matrix
+        transform = (
+            _decompose_vrml_transform(export_matrix)
+            if geometry_cache is not None
+            else None
+        )
+        if transform is None:
+            bm.transform(export_matrix)
         bm.verts.index_update()
         bm.faces.index_update()
 
@@ -330,7 +489,11 @@ def save_object(
                 if uv_image is None or not getattr(uv_image, "filepath", ""):
                     use_uv = False
 
-        save_bmesh(
+        if transform is not None:
+            _write_transform_start(fw, transform)
+
+        reusable_geometry_cache = geometry_cache if transform is not None else None
+        reused = save_bmesh(
             fw,
             bm,
             base_dst,
@@ -343,7 +506,14 @@ def save_object(
             uv_image,
             path_mode,
             copy_set,
+            reusable_geometry_cache,
+            geometry_group if reusable_geometry_cache is not None else None,
+            "\t\t" if transform is not None else "",
         )
+        if transform is not None:
+            fw("\t]\n")
+            fw("}\n")
+        return reused
     finally:
         if bm is not None:
             bm.free()
@@ -362,6 +532,7 @@ def save(
     color_type="MATERIAL",
     use_uv=True,
     path_mode="AUTO",
+    geometry_reuse="LINKED",
 ):
     """Export mesh objects from the current context to a VRML 2.0 file."""
     if global_matrix is None:
@@ -378,6 +549,16 @@ def save(
         return {"CANCELLED"}
 
     copy_set = set()
+    if geometry_reuse not in {"LINKED", "IDENTICAL", "OFF"}:
+        raise ValueError(f"Unknown geometry reuse mode: {geometry_reuse!r}")
+
+    geometry_cache = {} if geometry_reuse != "OFF" else None
+    mesh_data_counts = {}
+    if geometry_reuse == "LINKED":
+        for obj in mesh_objects:
+            mesh_key = _mesh_data_identity(obj)
+            mesh_data_counts[mesh_key] = mesh_data_counts.get(mesh_key, 0) + 1
+    reused_geometry_count = 0
     base_dst = os.path.dirname(os.path.abspath(filepath)) or os.getcwd()
 
     with open(filepath, "w", encoding="utf-8", newline="\n") as file:
@@ -387,7 +568,16 @@ def save(
 
         for obj in mesh_objects:
             fw("\n# Object: %r\n" % obj.name)
-            save_object(
+            object_geometry_cache = geometry_cache
+            geometry_group = "IDENTICAL" if geometry_reuse == "IDENTICAL" else None
+            if geometry_reuse == "LINKED":
+                mesh_key = _mesh_data_identity(obj)
+                if mesh_data_counts[mesh_key] < 2:
+                    object_geometry_cache = None
+                    geometry_group = None
+                else:
+                    geometry_group = ("LINKED", mesh_key)
+            reused_geometry_count += save_object(
                 fw,
                 global_matrix,
                 obj,
@@ -398,8 +588,16 @@ def save(
                 use_uv,
                 path_mode,
                 copy_set,
+                object_geometry_cache,
+                geometry_group,
             )
 
+    if geometry_cache is not None:
+        _remove_unused_geometry_defs(filepath, geometry_cache)
+
     bpy_extras.io_utils.path_reference_copy(copy_set)
-    operator.report({"INFO"}, f"Exported {len(mesh_objects)} mesh object(s) to VRML2")
+    message = f"Exported {len(mesh_objects)} mesh object(s) to VRML2"
+    if reused_geometry_count:
+        message += f"; reused {reused_geometry_count} geometries with DEF/USE"
+    operator.report({"INFO"}, message)
     return {"FINISHED"}

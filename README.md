@@ -19,6 +19,10 @@ A maintained Blender Extension for exporting mesh objects to **VRML 2.0 (`.wrl`)
 - Exports every mesh in the scene or selected objects only.
 - Applies evaluated modifiers when **Apply Modifiers** is enabled.
 - Applies object transforms, axis conversion, and a configurable global scale.
+- Reuses linked mesh geometry with VRML `DEF`/`USE` nodes to reduce file size.
+- Preserves separate object locations, rotations, and positive non-uniform scales while reusing geometry.
+- Offers an optional maximum-optimization mode that also finds independent but identical geometry.
+- Omits `DEF` names from geometry that is not referenced by any `USE` statement.
 - Triangulates exported geometry for predictable VRML output.
 - Exports the active mesh color attribute.
   - Supports point-domain colors.
@@ -73,6 +77,9 @@ The same archive works on Windows, macOS, and Linux; Blender installs it into th
 | --- | --- |
 | **Selection Only** | Exports selected mesh objects instead of every mesh in the scene. |
 | **Apply Modifiers** | Exports Blender's evaluated mesh with modifiers applied. |
+| **Geometry Reuse: Linked Objects Only** | Default. Reuses geometry only for objects that intentionally share Blender mesh data, such as duplicates created with `Alt+D`. |
+| **Geometry Reuse: All Identical Geometry** | Also reuses independent objects, including unchanged `Shift+D` copies, when their complete exported geometry is identical. |
+| **Geometry Reuse: Off** | Writes every object's geometry separately using baked coordinates. |
 | **Texture and UVs** | Exports the active UV map and a referenced image texture when one can be found. |
 | **Colors** | Enables color export. |
 | **Color Source: Color Attribute** | Uses the active point- or corner-domain mesh color attribute. Falls back to material colors if none is available. |
@@ -85,6 +92,8 @@ The same archive works on Windows, macOS, and Linux; Blender installs it into th
 
 - The extension exports mesh geometry only. Cameras, lights, armatures, animation, constraints, and scene hierarchy are not exported.
 - Geometry is triangulated during export.
+- Mirrored (negative-scale) and sheared object transforms are baked into coordinates rather than instanced because VRML97 `Transform` scale values must be positive.
+- Linked objects whose evaluated geometry differs because of modifiers, colors, or UV data are not combined.
 - Blender shader node graphs are not converted to VRML materials.
 - The exporter uses the first usable image texture found in an object's node-based materials; it does not reproduce complex multi-texture shading.
 - Color alpha values are ignored because the current writer outputs RGB values.

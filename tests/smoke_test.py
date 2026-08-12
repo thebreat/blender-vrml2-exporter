@@ -80,6 +80,7 @@ sys.modules[spec.name] = package
 spec.loader.exec_module(package)
 assert package.ExportVRML.bl_idname == 'export_scene.vrml2'
 assert package.ExportVRML.filename_ext == '.wrl'
+assert package.ExportVRML.__annotations__['geometry_reuse']['default'] == 'LINKED'
 
 # Import the writer.
 writer_spec = importlib.util.spec_from_file_location(
@@ -178,6 +179,203 @@ assert 'colorIndex [ 0 1 2 -1 ]' in content
 assert 'coordIndex [ 0 1 2 -1 ]' in content
 assert '1.0000 0.0000 0.0000' in content
 
+# Identical geometry in the same reuse group is written once and then referenced.
+geometry_cache = {}
+with tempfile.NamedTemporaryFile('w+', suffix='.wrl', encoding='utf-8', delete=False) as handle:
+    first_reused = writer.save_bmesh(
+        handle.write,
+        bm,
+        '/tmp',
+        False,
+        'MATERIAL',
+        [],
+        None,
+        None,
+        False,
+        None,
+        'AUTO',
+        set(),
+        geometry_cache,
+        ('LINKED', 1001),
+    )
+    second_reused = writer.save_bmesh(
+        handle.write,
+        bm,
+        '/tmp',
+        False,
+        'MATERIAL',
+        [],
+        None,
+        None,
+        False,
+        None,
+        'AUTO',
+        set(),
+        geometry_cache,
+        ('LINKED', 1001),
+    )
+    handle.flush()
+    reused_content = Path(handle.name).read_text(encoding='utf-8')
+
+assert first_reused is False
+assert second_reused is True
+assert reused_content.count('geometry DEF Geometry_1 IndexedFaceSet') == 1
+assert reused_content.count('geometry USE Geometry_1') == 1
+assert reused_content.count('point [ ') == 1
+
+# The same geometry in a different linked-mesh group remains independent.
+with tempfile.NamedTemporaryFile('w+', suffix='.wrl', encoding='utf-8', delete=False) as handle:
+    writer.save_bmesh(
+        handle.write,
+        bm,
+        '/tmp',
+        False,
+        'MATERIAL',
+        [],
+        None,
+        None,
+        False,
+        None,
+        'AUTO',
+        set(),
+        geometry_cache,
+        ('LINKED', 2002),
+    )
+    handle.flush()
+    independent_content = Path(handle.name).read_text(encoding='utf-8')
+
+assert 'geometry DEF Geometry_2 IndexedFaceSet' in independent_content
+assert 'geometry USE Geometry_1' not in independent_content
+assert 'geometry DEF' not in content
+
+with tempfile.NamedTemporaryFile('w+', suffix='.wrl', encoding='utf-8', delete=False) as handle:
+    handle.write(reused_content)
+    handle.write(independent_content)
+    cleanup_path = handle.name
+
+writer._remove_unused_geometry_defs(cleanup_path, geometry_cache)
+cleaned_content = Path(cleanup_path).read_text(encoding='utf-8')
+assert 'geometry DEF Geometry_1 IndexedFaceSet' in cleaned_content
+assert 'geometry USE Geometry_1' in cleaned_content
+assert 'DEF Geometry_2' not in cleaned_content
+assert cleaned_content.count('geometry IndexedFaceSet') == 1
+
+
+class Rotation:
+    def __init__(self, rows, axis=(0.0, 0.0, 1.0), angle=0.0):
+        self.rows = rows
+        self.axis = axis
+        self.angle = angle
+
+    def to_matrix(self):
+        return self.rows
+
+    def to_axis_angle(self):
+        return self.axis, self.angle
+
+
+class TransformMatrix(list):
+    def __init__(self, rows, translation, rotation, scale):
+        super().__init__(rows)
+        self.parts = (translation, rotation, scale)
+
+    def decompose(self):
+        return self.parts
+
+
+identity_rotation = Rotation(
+    (
+        (1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0),
+    )
+)
+positive_non_uniform = TransformMatrix(
+    (
+        (2.0, 0.0, 0.0, 4.0),
+        (0.0, 1.0, 0.0, 5.0),
+        (0.0, 0.0, 0.5, 6.0),
+        (0.0, 0.0, 0.0, 1.0),
+    ),
+    (4.0, 5.0, 6.0),
+    identity_rotation,
+    (2.0, 1.0, 0.5),
+)
+assert writer._decompose_vrml_transform(positive_non_uniform) == (
+    (4.0, 5.0, 6.0),
+    (0.0, 0.0, 1.0),
+    0.0,
+    (2.0, 1.0, 0.5),
+)
+
+mirrored = TransformMatrix(
+    positive_non_uniform,
+    (4.0, 5.0, 6.0),
+    identity_rotation,
+    (-2.0, 1.0, 0.5),
+)
+assert writer._decompose_vrml_transform(mirrored) is None
+
+sheared = TransformMatrix(
+    (
+        (2.0, 0.25, 0.0, 4.0),
+        (0.0, 1.0, 0.0, 5.0),
+        (0.0, 0.0, 0.5, 6.0),
+        (0.0, 0.0, 0.0, 1.0),
+    ),
+    (4.0, 5.0, 6.0),
+    identity_rotation,
+    (2.0, 1.0, 0.5),
+)
+assert writer._decompose_vrml_transform(sheared) is None
+
+# The export coordinator distinguishes intentional Blender links from
+# independent objects before the heavier Blender mesh conversion begins.
+shared_mesh = object()
+linked_a = types.SimpleNamespace(type='MESH', name='Linked A', data=shared_mesh)
+linked_b = types.SimpleNamespace(type='MESH', name='Linked B', data=shared_mesh)
+independent = types.SimpleNamespace(type='MESH', name='Independent', data=object())
+context = types.SimpleNamespace(
+    scene=types.SimpleNamespace(objects=[linked_a, linked_b, independent]),
+    selected_objects=[],
+)
+operator = Operator()
+original_save_object = writer.save_object
+
+
+def capture_reuse(*args):
+    capture_reuse.calls.append((args[2].name, args[-2], args[-1]))
+    return False
+
+
+writer.save_object = capture_reuse
+try:
+    for reuse_mode in ('LINKED', 'IDENTICAL', 'OFF'):
+        capture_reuse.calls = []
+        with tempfile.NamedTemporaryFile(suffix='.wrl', delete=False) as handle:
+            export_path = handle.name
+        assert writer.save(
+            operator,
+            context,
+            filepath=export_path,
+            global_matrix=object(),
+            geometry_reuse=reuse_mode,
+        ) == {'FINISHED'}
+
+        linked_a_call, linked_b_call, independent_call = capture_reuse.calls
+        if reuse_mode == 'LINKED':
+            assert linked_a_call[1] is linked_b_call[1]
+            assert linked_a_call[1] is not None
+            assert linked_a_call[2] == linked_b_call[2]
+            assert independent_call[1:] == (None, None)
+        elif reuse_mode == 'IDENTICAL':
+            assert linked_a_call[1] is linked_b_call[1] is independent_call[1]
+            assert {call[2] for call in capture_reuse.calls} == {'IDENTICAL'}
+        else:
+            assert all(call[1:] == (None, None) for call in capture_reuse.calls)
+finally:
+    writer.save_object = original_save_object
+
 with tempfile.NamedTemporaryFile('w+', suffix='.wrl', encoding='utf-8', delete=False) as handle:
     writer.save_bmesh(
         handle.write,
@@ -252,7 +450,14 @@ assert 'texCoordIndex [ 0 1 2 -1 ]' in texture_content
 assert '0.000000 0.000000 1.000000 0.000000 0.000000 1.000000' in texture_content
 assert '\"/tmp/textures/a \\"quoted\\" file.png\"' in texture_content
 
-for generated in (content, point_content, material_content, texture_content):
+for generated in (
+    content,
+    reused_content,
+    cleaned_content,
+    point_content,
+    material_content,
+    texture_content,
+):
     assert generated.count('{') == generated.count('}')
     assert generated.count('[') == generated.count(']')
 
