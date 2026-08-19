@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import stat
 import sys
 import tempfile
 import types
@@ -251,14 +252,22 @@ assert 'geometry DEF' not in content
 with tempfile.NamedTemporaryFile('w+', suffix='.wrl', encoding='utf-8', delete=False) as handle:
     handle.write(reused_content)
     handle.write(independent_content)
+    handle.write('# geometry DEF Geometry_2 IndexedFaceSet should remain in comments\n')
     cleanup_path = handle.name
+
+if os.name != 'nt':
+    os.chmod(cleanup_path, 0o640)
+    cleanup_mode = stat.S_IMODE(os.stat(cleanup_path).st_mode)
 
 writer._remove_unused_geometry_defs(cleanup_path, geometry_cache)
 cleaned_content = Path(cleanup_path).read_text(encoding='utf-8')
 assert 'geometry DEF Geometry_1 IndexedFaceSet' in cleaned_content
 assert 'geometry USE Geometry_1' in cleaned_content
-assert 'DEF Geometry_2' not in cleaned_content
+assert 'geometry DEF Geometry_2 IndexedFaceSet\n' not in cleaned_content
+assert '# geometry DEF Geometry_2 IndexedFaceSet should remain in comments' in cleaned_content
 assert cleaned_content.count('geometry IndexedFaceSet') == 1
+if os.name != 'nt':
+    assert stat.S_IMODE(os.stat(cleanup_path).st_mode) == cleanup_mode
 
 
 class Rotation:

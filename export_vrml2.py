@@ -9,6 +9,7 @@
 import hashlib
 import io
 import os
+import stat
 import tempfile
 
 import bmesh
@@ -274,6 +275,7 @@ def _remove_unused_geometry_defs(filepath, geometry_cache):
     if not unused_names:
         return
 
+    original_mode = stat.S_IMODE(os.stat(filepath).st_mode)
     output_directory = os.path.dirname(os.path.abspath(filepath)) or os.getcwd()
     fd, temporary_path = tempfile.mkstemp(
         prefix=".vrml2-export-",
@@ -285,12 +287,15 @@ def _remove_unused_geometry_defs(filepath, geometry_cache):
         with open(filepath, "r", encoding="utf-8", newline="") as source_file:
             with os.fdopen(fd, "w", encoding="utf-8", newline="") as output_file:
                 for line in source_file:
-                    for geometry_name in unused_names:
-                        marker = f"geometry DEF {geometry_name} "
-                        if marker in line:
-                            line = line.replace(marker, "geometry ", 1)
-                            break
+                    stripped_line = line.lstrip(" \t")
+                    if stripped_line.startswith("geometry DEF "):
+                        indentation = line[:len(line) - len(stripped_line)]
+                        definition = stripped_line[len("geometry DEF "):]
+                        geometry_name, separator, geometry_text = definition.partition(" ")
+                        if separator and geometry_name in unused_names:
+                            line = f"{indentation}geometry {geometry_text}"
                     output_file.write(line)
+        os.chmod(temporary_path, original_mode)
         os.replace(temporary_path, filepath)
     except Exception:
         try:
