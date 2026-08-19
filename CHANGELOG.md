@@ -2,6 +2,14 @@
 
 All notable changes to this maintained fork are recorded here.
 
+## Unreleased
+
+- Added geometry reuse modes for linked objects, all identical geometry, or no reuse.
+- Made intentional Blender mesh links the default requirement for VRML `DEF`/`USE` instancing.
+- Omitted unnecessary `DEF` names when a geometry node has no matching `USE` reference.
+- Preserved location, rotation, and positive non-uniform scale through VRML `Transform` nodes so moved copies can share geometry.
+- Added safe baked-coordinate fallback for mirrored, zero-scale, or sheared transforms.
+
 ## 0.2.0 - 2026-07-17
 
 - Converted the package from Blender's legacy add-on format to the current Blender Extension format.

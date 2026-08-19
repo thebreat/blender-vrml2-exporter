@@ -1,6 +1,6 @@
 # Validation notes
 
-The source archive includes a Blender-free smoke test for package imports and the VRML writer's point-color, corner-color, material-color, UV, texture-path, and index-output branches.
+The source archive includes a Blender-free smoke test for package imports and the VRML writer's point-color, corner-color, material-color, UV, texture-path, index-output, linked-group separation, unused-DEF cleanup, and DEF/USE geometry-reuse branches.
 
 Run it from the project root:
 

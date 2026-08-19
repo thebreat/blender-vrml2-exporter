@@ -50,6 +50,29 @@ class ExportVRML(bpy.types.Operator, ExportHelper):
         default=True,
     )
 
+    geometry_reuse: EnumProperty(
+        name="Geometry Reuse",
+        description="Choose which mesh objects may share VRML DEF/USE geometry",
+        items=(
+            (
+                "LINKED",
+                "Linked Objects Only",
+                "Reuse geometry only when Blender objects intentionally share mesh data",
+            ),
+            (
+                "IDENTICAL",
+                "All Identical Geometry",
+                "Also reuse independent objects whose exported geometry is identical",
+            ),
+            (
+                "OFF",
+                "Off",
+                "Write every object's geometry separately",
+            ),
+        ),
+        default="LINKED",
+    )
+
     use_color: BoolProperty(
         name="Colors",
         description="Export the active color attribute or material colors",
@@ -123,6 +146,7 @@ class ExportVRML(bpy.types.Operator, ExportHelper):
 
         layout.prop(self, "use_selection")
         layout.prop(self, "use_mesh_modifiers")
+        layout.prop(self, "geometry_reuse")
 
         row = layout.row(align=True)
         row.prop(self, "use_uv")
