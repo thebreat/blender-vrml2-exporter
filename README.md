@@ -10,7 +10,7 @@ A maintained Blender Extension for exporting mesh objects to **VRML 2.0 (`.wrl`)
 - **Bug reports and feature requests:** [GitHub Issues](https://github.com/thebreat/blender-vrml2-exporter/issues)
 - **License:** GNU General Public License, version 2 or any later version (`GPL-2.0-or-later`)
 - **Extension ID:** `io_scene_vrml2_export`
-- **Current package version:** `0.3.0`
+- **Current package version:** `0.4.0`
 - **Minimum Blender version:** `4.2.0`
 
 ## Features
@@ -40,13 +40,13 @@ A maintained Blender Extension for exporting mesh objects to **VRML 2.0 (`.wrl`)
 
 ## Install the packaged extension
 
-Use the included distributable archive named `vrml2_exporter-0.3.0.zip`. **Do not extract it first.**
+Use the included distributable archive named `vrml2_exporter-0.4.0.zip`. **Do not extract it first.**
 
 1. Open Blender 4.2 or newer.
 2. Open **Edit > Preferences**.
 3. Open **Get Extensions** or **Extensions**, depending on the Blender release.
 4. Open the menu in the upper-right corner and choose **Install from Disk**.
-5. Select `vrml2_exporter-0.3.0.zip`.
+5. Select `vrml2_exporter-0.4.0.zip`.
 6. Confirm the installation and enable **VRML2 Exporter** if Blender does not enable it automatically.
 7. Close Preferences.
 
