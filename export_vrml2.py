@@ -6,6 +6,7 @@
 
 """VRML 2.0 mesh writer used by the Blender export operator."""
 
+import gzip
 import hashlib
 import io
 import os
@@ -125,6 +126,112 @@ def _unique_strings(values):
     return result
 
 
+def _format_float(value, decimals):
+    """Round a VRML number without trailing zeroes or negative zero."""
+    if abs(value) < 0.5 * 10 ** (-decimals):
+        value = 0.0
+
+    output = f"{value:.{decimals}f}"
+    if "." in output:
+        output = output.rstrip("0").rstrip(".")
+    if output in {"", "-0"}:
+        return "0"
+    return output
+
+
+def _triangle_area_squared(first, second, third):
+    """Return four times a triangle's squared area using ordinary sequences."""
+    ab = tuple(second[index] - first[index] for index in range(3))
+    ac = tuple(third[index] - first[index] for index in range(3))
+    cross = (
+        ab[1] * ac[2] - ab[2] * ac[1],
+        ab[2] * ac[0] - ab[0] * ac[2],
+        ab[0] * ac[1] - ab[1] * ac[0],
+    )
+    return sum(component * component for component in cross)
+
+
+def _coordinate_decimal_places(bm, requested, maximum=9):
+    """Raise coordinate precision only when rounding would collapse a face."""
+    for decimals in range(requested, maximum + 1):
+        collapsed = False
+        for face in bm.faces:
+            coordinates = [tuple(loop.vert.co[:3]) for loop in face.loops]
+            rounded = [
+                tuple(round(value, decimals) for value in coordinate)
+                for coordinate in coordinates
+            ]
+            for index in range(1, len(coordinates) - 1):
+                original_area = _triangle_area_squared(
+                    coordinates[0],
+                    coordinates[index],
+                    coordinates[index + 1],
+                )
+                rounded_area = _triangle_area_squared(
+                    rounded[0],
+                    rounded[index],
+                    rounded[index + 1],
+                )
+                if original_area > 1.0e-30 and rounded_area <= 1.0e-30:
+                    collapsed = True
+                    break
+            if collapsed:
+                break
+        if not collapsed:
+            return decimals
+
+    return maximum
+
+
+def _uv_triangle_area(first, second, third):
+    """Return twice the absolute area of a triangle in UV space."""
+    return abs(
+        (second[0] - first[0]) * (third[1] - first[1])
+        - (second[1] - first[1]) * (third[0] - first[0])
+    )
+
+
+def _uv_decimal_places(bm, uv_layer, requested, maximum=9):
+    """Raise UV precision only when rounding would collapse a mapped face."""
+    for decimals in range(requested, maximum + 1):
+        collapsed = False
+        for face in bm.faces:
+            coordinates = [tuple(loop[uv_layer].uv[:2]) for loop in face.loops]
+            rounded = [
+                tuple(round(value, decimals) for value in coordinate)
+                for coordinate in coordinates
+            ]
+            for index in range(1, len(coordinates) - 1):
+                original_area = _uv_triangle_area(
+                    coordinates[0],
+                    coordinates[index],
+                    coordinates[index + 1],
+                )
+                rounded_area = _uv_triangle_area(
+                    rounded[0],
+                    rounded[index],
+                    rounded[index + 1],
+                )
+                if original_area > 1.0e-15 and rounded_area <= 1.0e-15:
+                    collapsed = True
+                    break
+            if collapsed:
+                break
+        if not collapsed:
+            return decimals
+
+    return maximum
+
+
+def _transform_decimal_places(transform, requested, maximum=9):
+    """Keep a positive transform scale from rounding down to zero."""
+    scale = transform[3]
+    for decimals in range(requested, maximum + 1):
+        if all(_format_float(value, decimals) != "0" for value in scale):
+            return decimals
+    return maximum
+
+
 def _write_face_indices(fw, faces, index_for_loop):
     for face in faces:
         for loop in face.loops:
@@ -141,13 +248,24 @@ def _write_indexed_face_set(
     color_domain,
     color_layer,
     use_uv,
+    decimal_places,
+    deduplicate_uvs,
 ):
     """Write the reusable geometry portion of a VRML Shape node."""
+    coordinate_decimals = _coordinate_decimal_places(bm, decimal_places)
+    color_decimals = min(decimal_places, 4)
+
     fw("IndexedFaceSet {\n")
     fw("\tcoord Coordinate {\n")
     fw("\t\tpoint [ ")
     for vertex in bm.verts:
-        fw("%.6f %.6f %.6f " % tuple(vertex.co[:3]))
+        fw(
+            "%s %s %s "
+            % tuple(
+                _format_float(value, coordinate_decimals)
+                for value in vertex.co[:3]
+            )
+        )
     fw("]\n")
     fw("\t}\n")
 
@@ -157,7 +275,13 @@ def _write_indexed_face_set(
             fw("\tcolor Color {\n")
             fw("\t\tcolor [ ")
             for color in material_colors:
-                fw("%.4f %.4f %.4f " % color)
+                fw(
+                    "%s %s %s "
+                    % tuple(
+                        _format_float(value, color_decimals)
+                        for value in color
+                    )
+                )
             fw("]\n")
             fw("\t}\n")
 
@@ -176,11 +300,23 @@ def _write_indexed_face_set(
 
             if color_domain == "POINT":
                 for vertex in bm.verts:
-                    fw("%.4f %.4f %.4f " % tuple(vertex[color_layer][:3]))
+                    fw(
+                        "%s %s %s "
+                        % tuple(
+                            _format_float(value, color_decimals)
+                            for value in vertex[color_layer][:3]
+                        )
+                    )
             else:
                 for face in bm.faces:
                     for loop in face.loops:
-                        fw("%.4f %.4f %.4f " % tuple(loop[color_layer][:3]))
+                        fw(
+                            "%s %s %s "
+                            % tuple(
+                                _format_float(value, color_decimals)
+                                for value in loop[color_layer][:3]
+                            )
+                        )
 
             fw("]\n")
             fw("\t}\n")
@@ -197,20 +333,38 @@ def _write_indexed_face_set(
 
     if use_uv:
         uv_layer = bm.loops.layers.uv.active
+        uv_decimals = _uv_decimal_places(bm, uv_layer, decimal_places)
+        uv_values = []
+        uv_indices_by_face = []
+        uv_index_by_value = {}
+
+        for face in bm.faces:
+            face_indices = []
+            for loop in face.loops:
+                uv = tuple(
+                    _format_float(value, uv_decimals)
+                    for value in loop[uv_layer].uv[:2]
+                )
+                uv_index = uv_index_by_value.get(uv) if deduplicate_uvs else None
+                if uv_index is None:
+                    uv_index = len(uv_values)
+                    uv_values.append(uv)
+                    if deduplicate_uvs:
+                        uv_index_by_value[uv] = uv_index
+                face_indices.append(uv_index)
+            uv_indices_by_face.append(face_indices)
+
         fw("\ttexCoord TextureCoordinate {\n")
         fw("\t\tpoint [ ")
-        for face in bm.faces:
-            for loop in face.loops:
-                fw("%.6f %.6f " % tuple(loop[uv_layer].uv[:2]))
+        for u_value, v_value in uv_values:
+            fw(f"{u_value} {v_value} ")
         fw("]\n")
         fw("\t}\n")
 
         fw("\ttexCoordIndex [ ")
-        texture_index = 0
-        for face in bm.faces:
-            for _loop in face.loops:
+        for face_indices in uv_indices_by_face:
+            for texture_index in face_indices:
                 fw(f"{texture_index} ")
-                texture_index += 1
             fw("-1 ")
         fw("]\n")
 
@@ -256,12 +410,22 @@ def _decompose_vrml_transform(matrix):
     return tuple(translation), tuple(axis), angle, tuple(scale)
 
 
-def _write_transform_start(fw, transform):
+def _write_transform_start(fw, transform, decimal_places):
     translation, axis, angle, scale = transform
+    decimals = _transform_decimal_places(transform, decimal_places)
     fw("Transform {\n")
-    fw("\ttranslation %.6f %.6f %.6f\n" % translation)
-    fw("\trotation %.6f %.6f %.6f %.6f\n" % (*axis, angle))
-    fw("\tscale %.6f %.6f %.6f\n" % scale)
+    fw(
+        "\ttranslation %s %s %s\n"
+        % tuple(_format_float(value, decimals) for value in translation)
+    )
+    fw(
+        "\trotation %s %s %s %s\n"
+        % tuple(_format_float(value, decimals) for value in (*axis, angle))
+    )
+    fw(
+        "\tscale %s %s %s\n"
+        % tuple(_format_float(value, decimals) for value in scale)
+    )
     fw("\tchildren [\n")
 
 
@@ -309,6 +473,77 @@ def _remove_unused_geometry_defs(filepath, geometry_cache):
         raise
 
 
+def _compact_wrl_file(filepath):
+    """Remove indentation and blank lines without loading a large WRL at once."""
+    original_mode = stat.S_IMODE(os.stat(filepath).st_mode)
+    output_directory = os.path.dirname(os.path.abspath(filepath)) or os.getcwd()
+    fd, temporary_path = tempfile.mkstemp(
+        prefix=".vrml2-compact-",
+        suffix=".wrl",
+        dir=output_directory,
+        text=True,
+    )
+    try:
+        with open(filepath, "r", encoding="utf-8", newline="") as source_file:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as output_file:
+                for line in source_file:
+                    compacted = line.lstrip()
+                    if compacted.strip():
+                        output_file.write(compacted.rstrip("\r\n") + "\n")
+        os.chmod(temporary_path, original_mode)
+        os.replace(temporary_path, filepath)
+    except Exception:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        try:
+            os.unlink(temporary_path)
+        except OSError:
+            pass
+        raise
+
+
+def _write_wrz_copy(filepath):
+    """Create a deterministic gzip-compressed WRZ copy beside the WRL."""
+    output_directory = os.path.dirname(os.path.abspath(filepath)) or os.getcwd()
+    wrz_path = os.path.splitext(filepath)[0] + ".wrz"
+    original_mode = stat.S_IMODE(os.stat(filepath).st_mode)
+    fd, temporary_path = tempfile.mkstemp(
+        prefix=".vrml2-compress-",
+        suffix=".wrz",
+        dir=output_directory,
+    )
+    try:
+        with open(filepath, "rb") as source_file:
+            with os.fdopen(fd, "wb") as raw_output:
+                with gzip.GzipFile(
+                    filename="",
+                    mode="wb",
+                    fileobj=raw_output,
+                    compresslevel=9,
+                    mtime=0,
+                ) as compressed_output:
+                    while True:
+                        chunk = source_file.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        compressed_output.write(chunk)
+        os.chmod(temporary_path, original_mode)
+        os.replace(temporary_path, wrz_path)
+    except Exception:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        try:
+            os.unlink(temporary_path)
+        except OSError:
+            pass
+        raise
+    return wrz_path
+
+
 def _mesh_data_identity(obj):
     """Return an export-session identity for an object's original mesh data."""
     mesh = obj.data
@@ -332,12 +567,32 @@ def save_bmesh(
     geometry_cache=None,
     geometry_group=None,
     indent="",
+    decimal_places=6,
+    deduplicate_uvs=True,
 ):
     """Write one triangulated BMesh as a VRML Shape node."""
     base_src = os.path.dirname(bpy.data.filepath) or os.getcwd()
+    single_material_color = (
+        use_color
+        and color_type == "MATERIAL"
+        and len(material_colors) == 1
+    )
 
     fw(f"{indent}Shape {{\n")
     fw(f"{indent}\tappearance Appearance {{\n")
+    if single_material_color:
+        color_decimals = min(decimal_places, 4)
+        color_text = " ".join(
+            _format_float(value, color_decimals)
+            for value in material_colors[0]
+        )
+        fw(f"{indent}\t\tmaterial Material {{\n")
+        fw(f"{indent}\t\t\tdiffuseColor {color_text}\n")
+        fw(f"{indent}\t\t}}\n")
+    elif not use_uv:
+        fw(f"{indent}\t\tmaterial Material {{\n")
+        fw(f"{indent}\t\t}}\n")
+
     if use_uv:
         filepath = uv_image.filepath
         filepath_full = os.path.normpath(
@@ -365,21 +620,20 @@ def save_bmesh(
             % " ".join(_vrml_quote(url) for url in image_urls)
         )
         fw(f"{indent}\t\t}}\n")
-    else:
-        fw(f"{indent}\t\tmaterial Material {{\n")
-        fw(f"{indent}\t\t}}\n")
     fw(f"{indent}\t}}\n")
 
     geometry_buffer = io.StringIO()
     _write_indexed_face_set(
         geometry_buffer.write,
         bm,
-        use_color,
+        use_color and not single_material_color,
         color_type,
         material_colors,
         color_domain,
         color_layer,
         use_uv,
+        decimal_places,
+        deduplicate_uvs,
     )
     geometry_text = geometry_buffer.getvalue()
     geometry_indent = f"{indent}\t"
@@ -421,6 +675,8 @@ def save_object(
     use_uv,
     path_mode,
     copy_set,
+    decimal_places,
+    deduplicate_uvs,
     geometry_cache,
     geometry_group,
 ):
@@ -495,7 +751,7 @@ def save_object(
                     use_uv = False
 
         if transform is not None:
-            _write_transform_start(fw, transform)
+            _write_transform_start(fw, transform, decimal_places)
 
         reusable_geometry_cache = geometry_cache if transform is not None else None
         reused = save_bmesh(
@@ -514,6 +770,8 @@ def save_object(
             reusable_geometry_cache,
             geometry_group if reusable_geometry_cache is not None else None,
             "\t\t" if transform is not None else "",
+            decimal_places,
+            deduplicate_uvs,
         )
         if transform is not None:
             fw("\t]\n")
@@ -538,6 +796,11 @@ def save(
     use_uv=True,
     path_mode="AUTO",
     geometry_reuse="LINKED",
+    decimal_places=6,
+    deduplicate_uvs=True,
+    include_object_comments=True,
+    compact_output=False,
+    create_wrz=False,
 ):
     """Export mesh objects from the current context to a VRML 2.0 file."""
     if global_matrix is None:
@@ -556,6 +819,8 @@ def save(
     copy_set = set()
     if geometry_reuse not in {"LINKED", "IDENTICAL", "OFF"}:
         raise ValueError(f"Unknown geometry reuse mode: {geometry_reuse!r}")
+    if not 0 <= decimal_places <= 9:
+        raise ValueError("Decimal places must be between 0 and 9")
 
     geometry_cache = {} if geometry_reuse != "OFF" else None
     mesh_data_counts = {}
@@ -572,7 +837,10 @@ def save(
         fw("# Exported from Blender with the VRML2 Exporter extension\n")
 
         for obj in mesh_objects:
-            fw("\n# Object: %r\n" % obj.name)
+            if include_object_comments:
+                fw("\n# Object: %r\n" % obj.name)
+            else:
+                fw("\n")
             object_geometry_cache = geometry_cache
             geometry_group = "IDENTICAL" if geometry_reuse == "IDENTICAL" else None
             if geometry_reuse == "LINKED":
@@ -593,6 +861,8 @@ def save(
                 use_uv,
                 path_mode,
                 copy_set,
+                decimal_places,
+                deduplicate_uvs,
                 object_geometry_cache,
                 geometry_group,
             )
@@ -600,9 +870,16 @@ def save(
     if geometry_cache is not None:
         _remove_unused_geometry_defs(filepath, geometry_cache)
 
+    if compact_output:
+        _compact_wrl_file(filepath)
+
+    wrz_path = _write_wrz_copy(filepath) if create_wrz else None
+
     bpy_extras.io_utils.path_reference_copy(copy_set)
     message = f"Exported {len(mesh_objects)} mesh object(s) to VRML2"
     if reused_geometry_count:
         message += f"; reused {reused_geometry_count} geometries with DEF/USE"
+    if wrz_path is not None:
+        message += f"; created {os.path.basename(wrz_path)}"
     operator.report({"INFO"}, message)
     return {"FINISHED"}

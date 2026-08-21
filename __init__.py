@@ -12,7 +12,13 @@ import importlib
 import traceback
 
 import bpy
-from bpy.props import BoolProperty, EnumProperty, FloatProperty, StringProperty
+from bpy.props import (
+    BoolProperty,
+    EnumProperty,
+    FloatProperty,
+    IntProperty,
+    StringProperty,
+)
 from bpy_extras.io_utils import (
     ExportHelper,
     axis_conversion,
@@ -94,6 +100,41 @@ class ExportVRML(bpy.types.Operator, ExportHelper):
         default=True,
     )
 
+    decimal_places: IntProperty(
+        name="Decimal Places",
+        description=(
+            "Round exported numbers to this many decimal places; coordinate "
+            "precision is raised automatically when needed to avoid collapsing faces"
+        ),
+        min=0,
+        max=9,
+        default=6,
+    )
+
+    deduplicate_uvs: BoolProperty(
+        name="Deduplicate UV Coordinates",
+        description="Write each rounded UV coordinate once and reuse its index",
+        default=True,
+    )
+
+    include_object_comments: BoolProperty(
+        name="Include Object Name Comments",
+        description="Write object names as comments to make the WRL easier to inspect",
+        default=True,
+    )
+
+    compact_output: BoolProperty(
+        name="Compact Output",
+        description="Remove indentation and blank lines to reduce WRL file size",
+        default=False,
+    )
+
+    create_wrz: BoolProperty(
+        name="Create Compressed WRZ Copy",
+        description="Also create a gzip-compressed .wrz file beside the .wrl file",
+        default=False,
+    )
+
     global_scale: FloatProperty(
         name="Scale",
         description="Scale exported coordinates",
@@ -152,6 +193,10 @@ class ExportVRML(bpy.types.Operator, ExportHelper):
         row.prop(self, "use_uv")
         row.prop(self, "use_color")
 
+        uv_row = layout.row()
+        uv_row.active = self.use_uv
+        uv_row.prop(self, "deduplicate_uvs")
+
         row = layout.row()
         row.active = self.use_color
         row.prop(self, "color_type")
@@ -161,6 +206,13 @@ class ExportVRML(bpy.types.Operator, ExportHelper):
         layout.prop(self, "axis_up")
         layout.prop(self, "global_scale")
         layout.prop(self, "path_mode")
+
+        layout.separator()
+        layout.label(text="File Size")
+        layout.prop(self, "decimal_places")
+        layout.prop(self, "include_object_comments")
+        layout.prop(self, "compact_output")
+        layout.prop(self, "create_wrz")
 
 
 def menu_func_export(self, context):

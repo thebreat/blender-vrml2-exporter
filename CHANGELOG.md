@@ -2,6 +2,16 @@
 
 All notable changes to this maintained fork are recorded here.
 
+## Unreleased
+
+- Added configurable decimal rounding for coordinates, transforms, UVs, and colors.
+- Removed unnecessary trailing zeroes and normalized negative zero in exported numbers.
+- Added automatic precision promotion when low precision would collapse a valid geometry face, collapse a mapped UV triangle, or turn a positive transform scale into zero.
+- Added UV-coordinate deduplication with remapped `texCoordIndex` values.
+- Moved single material colors into `Appearance` instead of repeating a geometry color index for every face.
+- Added options to omit object-name comments, compact WRL whitespace, and create a gzip-compressed WRZ copy.
+- Kept `solid FALSE` out of generated `IndexedFaceSet` nodes.
+
 ## 0.3.0 - 2026-08-19
 
 - Added geometry reuse modes for linked objects, all identical geometry, or no reuse.
