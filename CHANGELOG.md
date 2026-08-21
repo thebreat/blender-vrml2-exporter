@@ -2,7 +2,7 @@
 
 All notable changes to this maintained fork are recorded here.
 
-## Unreleased
+## 0.4.0 - 2026-08-21
 
 - Added configurable decimal rounding for coordinates, transforms, UVs, and colors.
 - Removed unnecessary trailing zeroes and normalized negative zero in exported numbers.
