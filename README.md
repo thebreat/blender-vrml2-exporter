@@ -23,6 +23,12 @@ A maintained Blender Extension for exporting mesh objects to **VRML 2.0 (`.wrl`)
 - Preserves separate object locations, rotations, and positive non-uniform scales while reusing geometry.
 - Offers an optional maximum-optimization mode that also finds independent but identical geometry.
 - Omits `DEF` names from geometry that is not referenced by any `USE` statement.
+- Offers configurable decimal rounding without trailing zeroes.
+- Automatically retains extra coordinate or UV precision when rounding would collapse a thin face or mapped UV triangle.
+- Deduplicates rounded UV coordinates and remaps `texCoordIndex` values.
+- Stores a single material color in `Appearance` instead of repeating a color index for every face.
+- Can omit object-name comments and compact whitespace for smaller WRL files.
+- Can create a gzip-compressed `.wrz` copy beside the exported `.wrl` file.
 - Triangulates exported geometry for predictable VRML output.
 - Exports the active mesh color attribute.
   - Supports point-domain colors.
@@ -81,12 +87,17 @@ The same archive works on Windows, macOS, and Linux; Blender installs it into th
 | **Geometry Reuse: All Identical Geometry** | Also reuses independent objects, including unchanged `Shift+D` copies, when their complete exported geometry is identical. |
 | **Geometry Reuse: Off** | Writes every object's geometry separately using baked coordinates. |
 | **Texture and UVs** | Exports the active UV map and a referenced image texture when one can be found. |
+| **Deduplicate UV Coordinates** | Default. Writes each rounded UV coordinate once and reuses its index. Disable this only when comparing against older exporter output. |
 | **Colors** | Enables color export. |
 | **Color Source: Color Attribute** | Uses the active point- or corner-domain mesh color attribute. Falls back to material colors if none is available. |
 | **Color Source: Material Color** | Uses each material's viewport diffuse color and the face material index. |
 | **Forward / Up** | Converts Blender coordinates to the target axis convention. Defaults remain forward `Z`, up `Y`. |
 | **Scale** | Multiplies exported coordinates by the selected value. |
 | **Path Mode** | Controls how image texture paths are written and whether Blender copies referenced files. |
+| **Decimal Places** | Rounds coordinates, transforms, UVs, and colors from 0 to 9 decimal places. The default is 6. Thin geometry, small mapped UV triangles, and very small positive scales automatically retain additional precision when necessary. |
+| **Include Object Name Comments** | Keeps object names in the WRL as human-readable comments. Disable it for a small file-size saving. |
+| **Compact Output** | Removes indentation and blank lines while keeping valid VRML syntax. |
+| **Create Compressed WRZ Copy** | Creates a gzip-compressed `.wrz` file beside the ordinary `.wrl` export. |
 
 ## Known limitations
 
@@ -97,6 +108,7 @@ The same archive works on Windows, macOS, and Linux; Blender installs it into th
 - Blender shader node graphs are not converted to VRML materials.
 - The exporter uses the first usable image texture found in an object's node-based materials; it does not reproduce complex multi-texture shading.
 - Color alpha values are ignored because the current writer outputs RGB values.
+- Rounding is decimal-place based rather than significant-digit based. Inspect highly precise engineering or medical geometry before choosing very low values.
 - VRML viewers differ in their support for texture paths, color indexing, and material behavior. Test representative files in the target viewer.
 
 ## Development layout

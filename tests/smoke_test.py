@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import importlib.util
 import os
 import stat
@@ -36,7 +37,13 @@ class ExportMenu:
 bpy.types = types.SimpleNamespace(Operator=Operator, TOPBAR_MT_file_export=ExportMenu)
 
 bpy_props = types.ModuleType('bpy.props')
-for prop_name in ('BoolProperty', 'EnumProperty', 'FloatProperty', 'StringProperty'):
+for prop_name in (
+    'BoolProperty',
+    'EnumProperty',
+    'FloatProperty',
+    'IntProperty',
+    'StringProperty',
+):
     setattr(bpy_props, prop_name, lambda **kwargs: kwargs)
 
 bpy_extras = types.ModuleType('bpy_extras')
@@ -82,6 +89,11 @@ spec.loader.exec_module(package)
 assert package.ExportVRML.bl_idname == 'export_scene.vrml2'
 assert package.ExportVRML.filename_ext == '.wrl'
 assert package.ExportVRML.__annotations__['geometry_reuse']['default'] == 'LINKED'
+assert package.ExportVRML.__annotations__['decimal_places']['default'] == 6
+assert package.ExportVRML.__annotations__['deduplicate_uvs']['default'] is True
+assert package.ExportVRML.__annotations__['include_object_comments']['default'] is True
+assert package.ExportVRML.__annotations__['compact_output']['default'] is False
+assert package.ExportVRML.__annotations__['create_wrz']['default'] is False
 
 # Import the writer.
 writer_spec = importlib.util.spec_from_file_location(
@@ -92,6 +104,9 @@ writer = importlib.util.module_from_spec(writer_spec)
 sys.modules[writer_spec.name] = writer
 writer_spec.loader.exec_module(writer)
 assert writer._vrml_quote(r'C:\textures\a "quoted" file.png') == '"C:/textures/a \\"quoted\\" file.png"'
+assert writer._format_float(10.0, 0) == '10'
+assert writer._format_float(-0.0001, 3) == '0'
+assert writer._format_float(1.23456, 3) == '1.235'
 
 
 class LayerSet:
@@ -178,7 +193,34 @@ with tempfile.NamedTemporaryFile('w+', suffix='.wrl', encoding='utf-8', delete=F
 assert 'colorPerVertex TRUE' in content
 assert 'colorIndex [ 0 1 2 -1 ]' in content
 assert 'coordIndex [ 0 1 2 -1 ]' in content
-assert '1.0000 0.0000 0.0000' in content
+assert 'color [ 1 0 0 0 1 0 0 0 1 ]' in content
+
+# Requested coordinate rounding automatically retains enough precision to
+# prevent a valid thin triangle from collapsing.
+thin_bm = BMesh()
+thin_bm.verts[1].co = (0.004, 0.0, 0.0)
+thin_bm.verts[2].co = (0.0, 0.004, 0.0)
+assert writer._coordinate_decimal_places(thin_bm, 2) == 3
+with tempfile.NamedTemporaryFile('w+', suffix='.wrl', encoding='utf-8', delete=False) as handle:
+    writer.save_bmesh(
+        handle.write,
+        thin_bm,
+        '/tmp',
+        False,
+        'MATERIAL',
+        [],
+        None,
+        None,
+        False,
+        None,
+        'AUTO',
+        set(),
+        decimal_places=2,
+    )
+    handle.flush()
+    thin_content = Path(handle.name).read_text(encoding='utf-8')
+
+assert 'point [ 0 0 0 0.004 0 0 0 0.004 0 ]' in thin_content
 
 # Identical geometry in the same reuse group is written once and then referenced.
 geometry_cache = {}
@@ -428,9 +470,32 @@ with tempfile.NamedTemporaryFile('w+', suffix='.wrl', encoding='utf-8', delete=F
     handle.flush()
     material_content = Path(handle.name).read_text(encoding='utf-8')
 
-assert 'colorPerVertex FALSE' in material_content
-assert 'color [ 0.2500 0.5000 0.7500 ]' in material_content
-assert 'colorIndex [ 0 ]' in material_content
+assert 'diffuseColor 0.25 0.5 0.75' in material_content
+assert 'colorPerVertex' not in material_content
+assert 'colorIndex [' not in material_content
+
+# Multiple material colors still require per-face color indexing.
+with tempfile.NamedTemporaryFile('w+', suffix='.wrl', encoding='utf-8', delete=False) as handle:
+    writer.save_bmesh(
+        handle.write,
+        bm,
+        '/tmp/export destination',
+        True,
+        'MATERIAL',
+        [(0.25, 0.5, 0.75), (1.0, 0.0, 0.0)],
+        None,
+        None,
+        False,
+        None,
+        'AUTO',
+        set(),
+    )
+    handle.flush()
+    multiple_material_content = Path(handle.name).read_text(encoding='utf-8')
+
+assert 'colorPerVertex FALSE' in multiple_material_content
+assert 'color [ 0.25 0.5 0.75 1 0 0 ]' in multiple_material_content
+assert 'colorIndex [ 0 ]' in multiple_material_content
 
 bm.loops.layers.uv.active = 'uv_layer'
 image = types.SimpleNamespace(
@@ -456,8 +521,80 @@ with tempfile.NamedTemporaryFile('w+', suffix='.wrl', encoding='utf-8', delete=F
     texture_content = Path(handle.name).read_text(encoding='utf-8')
 
 assert 'texCoordIndex [ 0 1 2 -1 ]' in texture_content
-assert '0.000000 0.000000 1.000000 0.000000 0.000000 1.000000' in texture_content
+assert 'point [ 0 0 1 0 0 1 ]' in texture_content
 assert '\"/tmp/textures/a \\"quoted\\" file.png\"' in texture_content
+
+# Repeated UV coordinates are written once and referenced by index.
+duplicate_uv_bm = BMesh()
+duplicate_uv_bm.loops.layers.uv.active = 'uv_layer'
+duplicate_uv_bm.faces[0].loops[2]._uv = (0.0, 0.0)
+with tempfile.NamedTemporaryFile('w+', suffix='.wrl', encoding='utf-8', delete=False) as handle:
+    writer.save_bmesh(
+        handle.write,
+        duplicate_uv_bm,
+        '/tmp',
+        False,
+        'MATERIAL',
+        [],
+        None,
+        None,
+        True,
+        image,
+        'AUTO',
+        set(),
+        deduplicate_uvs=True,
+    )
+    handle.flush()
+    deduplicated_uv_content = Path(handle.name).read_text(encoding='utf-8')
+
+assert 'point [ 0 0 1 0 ]' in deduplicated_uv_content
+assert 'texCoordIndex [ 0 1 0 -1 ]' in deduplicated_uv_content
+
+# Thin, valid UV triangles retain additional precision just like geometry.
+thin_uv_bm = BMesh()
+thin_uv_bm.loops.layers.uv.active = 'uv_layer'
+thin_uv_bm.faces[0].loops[0]._uv = (0.0, 0.0)
+thin_uv_bm.faces[0].loops[1]._uv = (0.0004, 0.0)
+thin_uv_bm.faces[0].loops[2]._uv = (0.0, 0.0004)
+assert writer._uv_decimal_places(thin_uv_bm, 'uv_layer', 3) == 4
+with tempfile.NamedTemporaryFile('w+', suffix='.wrl', encoding='utf-8', delete=False) as handle:
+    writer.save_bmesh(
+        handle.write,
+        thin_uv_bm,
+        '/tmp',
+        False,
+        'MATERIAL',
+        [],
+        None,
+        None,
+        True,
+        image,
+        'AUTO',
+        set(),
+        decimal_places=3,
+    )
+    handle.flush()
+    thin_uv_content = Path(handle.name).read_text(encoding='utf-8')
+
+assert 'point [ 0 0 0.0004 0 0 0.0004 ]' in thin_uv_content
+
+# Compact output and deterministic WRZ compression preserve the WRL content.
+with tempfile.NamedTemporaryFile('w+', suffix='.wrl', encoding='utf-8', delete=False) as handle:
+    handle.write('#VRML V2.0 utf8\n\n\tShape {\n\t\tgeometry IndexedFaceSet {\n\t\t}\n\t}\n')
+    compact_path = handle.name
+
+writer._compact_wrl_file(compact_path)
+compacted_content = Path(compact_path).read_text(encoding='utf-8')
+assert compacted_content == (
+    '#VRML V2.0 utf8\n'
+    'Shape {\n'
+    'geometry IndexedFaceSet {\n'
+    '}\n'
+    '}\n'
+)
+wrz_path = writer._write_wrz_copy(compact_path)
+with gzip.open(wrz_path, 'rt', encoding='utf-8') as compressed_file:
+    assert compressed_file.read() == compacted_content
 
 for generated in (
     content,
@@ -465,9 +602,14 @@ for generated in (
     cleaned_content,
     point_content,
     material_content,
+    multiple_material_content,
     texture_content,
+    thin_content,
+    deduplicated_uv_content,
+    thin_uv_content,
 ):
     assert generated.count('{') == generated.count('}')
     assert generated.count('[') == generated.count(']')
+    assert 'solid FALSE' not in generated
 
 print('Material, UV, path escaping, and structural checks passed.')
