@@ -2,6 +2,11 @@
 
 All notable changes to this maintained fork are recorded here.
 
+## Unreleased
+
+- Added automatic conversion of Blender Shade Smooth and Smooth by Angle settings to VRML `creaseAngle` radians.
+- Kept otherwise-identical reusable geometry separate when its smoothing angle differs.
+
 ## 0.4.0 - 2026-08-21
 
 - Added configurable decimal rounding for coordinates, transforms, UVs, and colors.

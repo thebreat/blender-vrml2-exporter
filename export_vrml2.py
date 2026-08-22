@@ -9,6 +9,7 @@
 import gzip
 import hashlib
 import io
+import math
 import os
 import stat
 import tempfile
@@ -232,6 +233,66 @@ def _transform_decimal_places(transform, requested, maximum=9):
     return maximum
 
 
+def _smooth_by_angle_modifier_angle(obj):
+    """Return a visible Smooth by Angle modifier's angle in radians."""
+    modifiers = getattr(obj, "modifiers", ())
+    for modifier in reversed(modifiers):
+        if (
+            getattr(modifier, "type", None) != "NODES"
+            or not getattr(modifier, "show_viewport", True)
+        ):
+            continue
+
+        node_group = getattr(modifier, "node_group", None)
+        if node_group is None:
+            continue
+
+        names = (
+            getattr(modifier, "name", ""),
+            getattr(node_group, "name", ""),
+        )
+        normalized_names = (
+            name.casefold().replace("_", " ").replace("-", " ")
+            for name in names
+        )
+        if not any("smooth by angle" in name for name in normalized_names):
+            continue
+
+        interface = getattr(node_group, "interface", None)
+        for socket in getattr(interface, "items_tree", ()):
+            if (
+                getattr(socket, "item_type", "SOCKET") != "SOCKET"
+                or getattr(socket, "in_out", "INPUT") != "INPUT"
+                or getattr(socket, "name", "") != "Angle"
+            ):
+                continue
+
+            identifier = getattr(socket, "identifier", "")
+            if not identifier:
+                continue
+            get_value = getattr(modifier, "get", None)
+            if get_value is None:
+                continue
+            angle = get_value(identifier)
+            if isinstance(angle, (int, float)):
+                return min(math.pi, max(0.0, float(angle)))
+
+    return None
+
+
+def _crease_angle_for_mesh(obj, bm, use_mesh_modifiers):
+    """Map Blender's smooth shading state to a VRML crease angle in radians."""
+    if use_mesh_modifiers:
+        modifier_angle = _smooth_by_angle_modifier_angle(obj)
+        if modifier_angle is not None:
+            return modifier_angle
+
+    faces = list(bm.faces)
+    if faces and all(getattr(face, "smooth", False) for face in faces):
+        return math.pi
+    return 0.0
+
+
 def _write_face_indices(fw, faces, index_for_loop):
     for face in faces:
         for loop in face.loops:
@@ -250,12 +311,16 @@ def _write_indexed_face_set(
     use_uv,
     decimal_places,
     deduplicate_uvs,
+    crease_angle,
 ):
     """Write the reusable geometry portion of a VRML Shape node."""
     coordinate_decimals = _coordinate_decimal_places(bm, decimal_places)
     color_decimals = min(decimal_places, 4)
 
     fw("IndexedFaceSet {\n")
+    if crease_angle > 0.0:
+        angle_decimals = max(decimal_places, 6)
+        fw(f"\tcreaseAngle {_format_float(crease_angle, angle_decimals)}\n")
     fw("\tcoord Coordinate {\n")
     fw("\t\tpoint [ ")
     for vertex in bm.verts:
@@ -569,6 +634,7 @@ def save_bmesh(
     indent="",
     decimal_places=6,
     deduplicate_uvs=True,
+    crease_angle=0.0,
 ):
     """Write one triangulated BMesh as a VRML Shape node."""
     base_src = os.path.dirname(bpy.data.filepath) or os.getcwd()
@@ -634,6 +700,7 @@ def save_bmesh(
         use_uv,
         decimal_places,
         deduplicate_uvs,
+        crease_angle,
     )
     geometry_text = geometry_buffer.getvalue()
     geometry_indent = f"{indent}\t"
@@ -708,6 +775,7 @@ def save_object(
                 bm.from_mesh(mesh)
 
         bmesh.ops.triangulate(bm, faces=list(bm.faces))
+        crease_angle = _crease_angle_for_mesh(obj, bm, use_mesh_modifiers)
         object_matrix = obj_eval.matrix_world if obj_eval is not None else obj.matrix_world
         export_matrix = global_matrix @ object_matrix
         transform = (
@@ -772,6 +840,7 @@ def save_object(
             "\t\t" if transform is not None else "",
             decimal_places,
             deduplicate_uvs,
+            crease_angle,
         )
         if transform is not None:
             fw("\t]\n")

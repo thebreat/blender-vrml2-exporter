@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gzip
 import importlib.util
+import math
 import os
 import stat
 import sys
@@ -109,6 +110,50 @@ assert writer._format_float(-0.0001, 3) == '0'
 assert writer._format_float(1.23456, 3) == '1.235'
 
 
+class NodesModifier(dict):
+    def __init__(self, angle, *, show_viewport=True):
+        super().__init__(AngleSocket=angle)
+        self.type = 'NODES'
+        self.name = 'Smooth by Angle'
+        self.show_viewport = show_viewport
+        angle_socket = types.SimpleNamespace(
+            item_type='SOCKET',
+            in_out='INPUT',
+            name='Angle',
+            identifier='AngleSocket',
+        )
+        self.node_group = types.SimpleNamespace(
+            name='Smooth by Angle',
+            interface=types.SimpleNamespace(items_tree=[angle_socket]),
+        )
+
+
+thirty_degree_modifier = NodesModifier(math.radians(30.0))
+forty_five_degree_modifier = NodesModifier(math.radians(45.0))
+ninety_degree_modifier = NodesModifier(math.radians(90.0))
+assert math.isclose(
+    writer._smooth_by_angle_modifier_angle(
+        types.SimpleNamespace(modifiers=[thirty_degree_modifier])
+    ),
+    math.radians(30.0),
+)
+assert math.isclose(
+    writer._smooth_by_angle_modifier_angle(
+        types.SimpleNamespace(modifiers=[forty_five_degree_modifier])
+    ),
+    math.radians(45.0),
+)
+assert math.isclose(
+    writer._smooth_by_angle_modifier_angle(
+        types.SimpleNamespace(modifiers=[ninety_degree_modifier])
+    ),
+    math.radians(90.0),
+)
+assert writer._smooth_by_angle_modifier_angle(
+    types.SimpleNamespace(modifiers=[NodesModifier(math.radians(30.0), show_viewport=False)])
+) is None
+
+
 class LayerSet:
     def __init__(self, active=None):
         self.active = active
@@ -172,6 +217,15 @@ class BMesh:
 
 
 bm = BMesh()
+assert writer._crease_angle_for_mesh(
+    types.SimpleNamespace(modifiers=[thirty_degree_modifier]), bm, True
+) == math.radians(30.0)
+assert writer._crease_angle_for_mesh(types.SimpleNamespace(modifiers=[]), bm, True) == 0.0
+for face in bm.faces:
+    face.smooth = True
+assert writer._crease_angle_for_mesh(
+    types.SimpleNamespace(modifiers=[]), bm, True
+) == math.pi
 with tempfile.NamedTemporaryFile('w+', suffix='.wrl', encoding='utf-8', delete=False) as handle:
     writer.save_bmesh(
         handle.write,
@@ -194,6 +248,75 @@ assert 'colorPerVertex TRUE' in content
 assert 'colorIndex [ 0 1 2 -1 ]' in content
 assert 'coordIndex [ 0 1 2 -1 ]' in content
 assert 'color [ 1 0 0 0 1 0 0 0 1 ]' in content
+
+# Blender smoothing angles are exported as VRML radians. Crease angle is part
+# of reusable geometry, so otherwise-identical meshes with different shading
+# thresholds remain independent.
+smoothing_cache = {}
+with tempfile.NamedTemporaryFile('w+', suffix='.wrl', encoding='utf-8', delete=False) as handle:
+    writer.save_bmesh(
+        handle.write,
+        bm,
+        '/tmp',
+        False,
+        'MATERIAL',
+        [],
+        None,
+        None,
+        False,
+        None,
+        'AUTO',
+        set(),
+        smoothing_cache,
+        ('LINKED', 3003),
+        decimal_places=0,
+        crease_angle=math.radians(30.0),
+    )
+    writer.save_bmesh(
+        handle.write,
+        bm,
+        '/tmp',
+        False,
+        'MATERIAL',
+        [],
+        None,
+        None,
+        False,
+        None,
+        'AUTO',
+        set(),
+        smoothing_cache,
+        ('LINKED', 3003),
+        crease_angle=math.radians(45.0),
+    )
+    handle.flush()
+    smoothing_content = Path(handle.name).read_text(encoding='utf-8')
+
+assert 'creaseAngle 0.523599' in smoothing_content
+assert 'creaseAngle 0.785398' in smoothing_content
+assert smoothing_content.count('geometry DEF ') == 2
+assert 'geometry USE ' not in smoothing_content
+
+with tempfile.NamedTemporaryFile('w+', suffix='.wrl', encoding='utf-8', delete=False) as handle:
+    writer.save_bmesh(
+        handle.write,
+        bm,
+        '/tmp',
+        False,
+        'MATERIAL',
+        [],
+        None,
+        None,
+        False,
+        None,
+        'AUTO',
+        set(),
+        crease_angle=math.pi,
+    )
+    handle.flush()
+    fully_smooth_content = Path(handle.name).read_text(encoding='utf-8')
+
+assert 'creaseAngle 3.141593' in fully_smooth_content
 
 # Requested coordinate rounding automatically retains enough precision to
 # prevent a valid thin triangle from collapsing.
@@ -607,6 +730,8 @@ for generated in (
     thin_content,
     deduplicated_uv_content,
     thin_uv_content,
+    smoothing_content,
+    fully_smooth_content,
 ):
     assert generated.count('{') == generated.count('}')
     assert generated.count('[') == generated.count(']')

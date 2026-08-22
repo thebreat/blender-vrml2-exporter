@@ -19,6 +19,8 @@ A maintained Blender Extension for exporting mesh objects to **VRML 2.0 (`.wrl`)
 - Exports every mesh in the scene or selected objects only.
 - Applies evaluated modifiers when **Apply Modifiers** is enabled.
 - Applies object transforms, axis conversion, and a configurable global scale.
+- Converts Blender shade smoothing to VRML `creaseAngle` values in radians.
+- Preserves Smooth by Angle thresholds such as 30°, 45°, and 90° per reusable geometry.
 - Reuses linked mesh geometry with VRML `DEF`/`USE` nodes to reduce file size.
 - Preserves separate object locations, rotations, and positive non-uniform scales while reusing geometry.
 - Offers an optional maximum-optimization mode that also finds independent but identical geometry.
@@ -77,6 +79,21 @@ The same archive works on Windows, macOS, and Linux; Blender installs it into th
 3. Choose the destination and configure the export options.
 4. Select **Export VRML2**.
 
+### Shade smoothing
+
+The exporter converts Blender shading to the VRML `IndexedFaceSet.creaseAngle`
+field automatically:
+
+| Blender shading | VRML output |
+| --- | --- |
+| **Shade Flat** | Omits `creaseAngle`, using VRML's flat default of `0`. |
+| **Smooth by Angle** | Converts the modifier angle from degrees to radians. For example, 30° becomes `0.523599`, 45° becomes `0.785398`, and 90° becomes `1.570796`. |
+| **Shade Smooth** | Writes `creaseAngle 3.141593` to smooth essentially every adjoining face. |
+
+The crease angle is stored inside reusable geometry. Objects with identical
+coordinates but different smoothing angles therefore remain separate instead
+of incorrectly sharing one `DEF`/`USE` geometry definition.
+
 ### Export options
 
 | Option | Behavior |
@@ -105,6 +122,7 @@ The same archive works on Windows, macOS, and Linux; Blender installs it into th
 - Geometry is triangulated during export.
 - Mirrored (negative-scale) and sheared object transforms are baked into coordinates rather than instanced because VRML97 `Transform` scale values must be positive.
 - Linked objects whose evaluated geometry differs because of modifiers, colors, or UV data are not combined.
+- A single VRML `creaseAngle` cannot represent arbitrary combinations of manually marked sharp edges; exact sharp-edge export is planned separately.
 - Blender shader node graphs are not converted to VRML materials.
 - The exporter uses the first usable image texture found in an object's node-based materials; it does not reproduce complex multi-texture shading.
 - Color alpha values are ignored because the current writer outputs RGB values.
