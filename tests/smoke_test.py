@@ -128,6 +128,32 @@ class NodesModifier(dict):
         )
 
 
+class Blender52NodesModifier:
+    def __init__(self, angle):
+        self.type = 'NODES'
+        self.name = 'Smooth by Angle'
+        self.show_viewport = True
+        angle_socket = types.SimpleNamespace(
+            item_type='SOCKET',
+            in_out='INPUT',
+            name='Angle',
+            identifier='Input_1',
+        )
+        self.node_group = types.SimpleNamespace(
+            name='Smooth by Angle',
+            interface=types.SimpleNamespace(items_tree=[angle_socket]),
+        )
+        self.properties = types.SimpleNamespace(
+            inputs=types.SimpleNamespace(
+                Input_1=types.SimpleNamespace(value=angle)
+            )
+        )
+
+    def get(self, identifier):
+        del identifier
+        raise TypeError("this type doesn't support IDProperties")
+
+
 thirty_degree_modifier = NodesModifier(math.radians(30.0))
 forty_five_degree_modifier = NodesModifier(math.radians(45.0))
 ninety_degree_modifier = NodesModifier(math.radians(90.0))
@@ -148,6 +174,14 @@ assert math.isclose(
         types.SimpleNamespace(modifiers=[ninety_degree_modifier])
     ),
     math.radians(90.0),
+)
+assert math.isclose(
+    writer._smooth_by_angle_modifier_angle(
+        types.SimpleNamespace(
+            modifiers=[Blender52NodesModifier(math.radians(45.0))]
+        )
+    ),
+    math.radians(45.0),
 )
 assert writer._smooth_by_angle_modifier_angle(
     types.SimpleNamespace(modifiers=[NodesModifier(math.radians(30.0), show_viewport=False)])

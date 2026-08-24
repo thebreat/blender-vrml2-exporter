@@ -6,6 +6,7 @@ All notable changes to this maintained fork are recorded here.
 
 - Added automatic conversion of Blender Shade Smooth and Smooth by Angle settings to VRML `creaseAngle` radians.
 - Kept otherwise-identical reusable geometry separate when its smoothing angle differs.
+- Added Blender 5.2 compatibility for reading Geometry Nodes modifier inputs.
 
 ## 0.4.0 - 2026-08-21
 

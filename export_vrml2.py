@@ -233,6 +233,28 @@ def _transform_decimal_places(transform, requested, maximum=9):
     return maximum
 
 
+def _nodes_modifier_input_value(modifier, identifier):
+    """Read a Geometry Nodes modifier input across Blender API versions."""
+    properties = getattr(modifier, "properties", None)
+    inputs = getattr(properties, "inputs", None)
+    if inputs is not None:
+        input_property = getattr(inputs, identifier, None)
+        if input_property is not None:
+            value = getattr(input_property, "value", None)
+            if value is not None:
+                return value
+
+    # Blender 4.2 through 5.1 stored Geometry Nodes inputs as system-defined
+    # ID properties. Blender 5.2 exposes them through modifier.properties.
+    get_value = getattr(modifier, "get", None)
+    if get_value is not None:
+        try:
+            return get_value(identifier)
+        except (KeyError, TypeError):
+            pass
+    return None
+
+
 def _smooth_by_angle_modifier_angle(obj):
     """Return a visible Smooth by Angle modifier's angle in radians."""
     modifiers = getattr(obj, "modifiers", ())
@@ -270,10 +292,7 @@ def _smooth_by_angle_modifier_angle(obj):
             identifier = getattr(socket, "identifier", "")
             if not identifier:
                 continue
-            get_value = getattr(modifier, "get", None)
-            if get_value is None:
-                continue
-            angle = get_value(identifier)
+            angle = _nodes_modifier_input_value(modifier, identifier)
             if isinstance(angle, (int, float)):
                 return min(math.pi, max(0.0, float(angle)))
 
