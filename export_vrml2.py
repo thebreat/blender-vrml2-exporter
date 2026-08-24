@@ -494,6 +494,26 @@ def _decompose_vrml_transform(matrix):
     return tuple(translation), tuple(axis), angle, tuple(scale)
 
 
+def _matrix_flips_winding(matrix):
+    """Return whether the matrix reverses triangle winding."""
+    determinant = (
+        matrix[0][0]
+        * (matrix[1][1] * matrix[2][2] - matrix[1][2] * matrix[2][1])
+        - matrix[0][1]
+        * (matrix[1][0] * matrix[2][2] - matrix[1][2] * matrix[2][0])
+        + matrix[0][2]
+        * (matrix[1][0] * matrix[2][1] - matrix[1][1] * matrix[2][0])
+    )
+    return determinant < 0.0
+
+
+def _apply_baked_transform(bm, matrix):
+    """Transform geometry and preserve outward winding across reflections."""
+    bm.transform(matrix)
+    if _matrix_flips_winding(matrix):
+        bmesh.ops.reverse_faces(bm, faces=list(bm.faces))
+
+
 def _write_transform_start(fw, transform, decimal_places):
     translation, axis, angle, scale = transform
     decimals = _transform_decimal_places(transform, decimal_places)
@@ -803,7 +823,7 @@ def save_object(
             else None
         )
         if transform is None:
-            bm.transform(export_matrix)
+            _apply_baked_transform(bm, export_matrix)
         bm.verts.index_update()
         bm.faces.index_update()
 

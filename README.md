@@ -23,6 +23,7 @@ A maintained Blender Extension for exporting mesh objects to **VRML 2.0 (`.wrl`)
 - Preserves Smooth by Angle thresholds such as 30°, 45°, and 90° per reusable geometry.
 - Reuses linked mesh geometry with VRML `DEF`/`USE` nodes to reduce file size.
 - Preserves separate object locations, rotations, and positive non-uniform scales while reusing geometry.
+- Preserves outward-facing triangle winding when mirrored or negative-scale transforms are baked.
 - Offers an optional maximum-optimization mode that also finds independent but identical geometry.
 - Omits `DEF` names from geometry that is not referenced by any `USE` statement.
 - Offers configurable decimal rounding without trailing zeroes.
@@ -120,7 +121,7 @@ of incorrectly sharing one `DEF`/`USE` geometry definition.
 
 - The extension exports mesh geometry only. Cameras, lights, armatures, animation, constraints, and scene hierarchy are not exported.
 - Geometry is triangulated during export.
-- Mirrored (negative-scale) and sheared object transforms are baked into coordinates rather than instanced because VRML97 `Transform` scale values must be positive.
+- Mirrored (negative-scale) and sheared object transforms are baked into coordinates rather than instanced because VRML97 `Transform` scale values must be positive. Reflected geometry has its triangle winding corrected for one-sided VRML viewers.
 - Linked objects whose evaluated geometry differs because of modifiers, colors, or UV data are not combined.
 - A single VRML `creaseAngle` cannot represent arbitrary combinations of manually marked sharp edges; exact sharp-edge export is planned separately.
 - Blender shader node graphs are not converted to VRML materials.

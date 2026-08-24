@@ -517,12 +517,19 @@ assert writer._decompose_vrml_transform(positive_non_uniform) == (
 )
 
 mirrored = TransformMatrix(
-    positive_non_uniform,
+    (
+        (-2.0, 0.0, 0.0, 4.0),
+        (0.0, 1.0, 0.0, 5.0),
+        (0.0, 0.0, 0.5, 6.0),
+        (0.0, 0.0, 0.0, 1.0),
+    ),
     (4.0, 5.0, 6.0),
     identity_rotation,
     (-2.0, 1.0, 0.5),
 )
 assert writer._decompose_vrml_transform(mirrored) is None
+assert writer._matrix_flips_winding(mirrored) is True
+assert writer._matrix_flips_winding(positive_non_uniform) is False
 
 sheared = TransformMatrix(
     (
@@ -536,6 +543,33 @@ sheared = TransformMatrix(
     (2.0, 1.0, 0.5),
 )
 assert writer._decompose_vrml_transform(sheared) is None
+assert writer._matrix_flips_winding(sheared) is False
+
+
+class TransformCapture:
+    def __init__(self):
+        self.faces = [object(), object()]
+        self.transformed_with = None
+        self.reversed_faces = None
+
+    def transform(self, matrix):
+        self.transformed_with = matrix
+
+
+def reverse_faces(bm_value, *, faces):
+    bm_value.reversed_faces = faces
+
+
+bmesh.ops = types.SimpleNamespace(reverse_faces=reverse_faces)
+positive_capture = TransformCapture()
+writer._apply_baked_transform(positive_capture, positive_non_uniform)
+assert positive_capture.transformed_with is positive_non_uniform
+assert positive_capture.reversed_faces is None
+
+mirrored_capture = TransformCapture()
+writer._apply_baked_transform(mirrored_capture, mirrored)
+assert mirrored_capture.transformed_with is mirrored
+assert mirrored_capture.reversed_faces == mirrored_capture.faces
 
 # The export coordinator distinguishes intentional Blender links from
 # independent objects before the heavier Blender mesh conversion begins.
