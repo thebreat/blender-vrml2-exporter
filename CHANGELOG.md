@@ -8,6 +8,8 @@ All notable changes to this maintained fork are recorded here.
 - Kept otherwise-identical reusable geometry separate when its smoothing angle differs.
 - Added Blender 5.2 compatibility for reading Geometry Nodes modifier inputs.
 - Corrected triangle winding after baking mirrored or negative-scale transforms so one-sided VRML viewers do not display hollow geometry.
+- Added automatic export of VRML2 Material Studio diffuse, emissive, specular, ambient intensity, shininess, and transparency values.
+- Split multi-material meshes into separate VRML Shapes only when full per-material Appearance settings require it.
 
 ## 0.4.0 - 2026-08-21
 

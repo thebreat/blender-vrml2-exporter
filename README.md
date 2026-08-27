@@ -30,6 +30,8 @@ A maintained Blender Extension for exporting mesh objects to **VRML 2.0 (`.wrl`)
 - Automatically retains extra coordinate or UV precision when rounding would collapse a thin face or mapped UV triangle.
 - Deduplicates rounded UV coordinates and remaps `texCoordIndex` values.
 - Stores a single material color in `Appearance` instead of repeating a color index for every face.
+- Reads enabled VRML2 Material Studio data directly from Blender materials and exports all six VRML97 Material fields without requiring the Studio add-on to be running.
+- Preserves full Material Studio settings on multi-material meshes by creating the separate VRML Shapes required for per-material appearances.
 - Can omit object-name comments and compact whitespace for smaller WRL files.
 - Can create a gzip-compressed `.wrz` copy beside the exported `.wrl` file.
 - Triangulates exported geometry for predictable VRML output.
@@ -106,9 +108,9 @@ of incorrectly sharing one `DEF`/`USE` geometry definition.
 | **Geometry Reuse: Off** | Writes every object's geometry separately using baked coordinates. |
 | **Texture and UVs** | Exports the active UV map and a referenced image texture when one can be found. |
 | **Deduplicate UV Coordinates** | Default. Writes each rounded UV coordinate once and reuses its index. Disable this only when comparing against older exporter output. |
-| **Colors** | Enables color export. |
+| **Colors / Materials** | Enables color-attribute or material-setting export. |
 | **Color Source: Color Attribute** | Uses the active point- or corner-domain mesh color attribute. Falls back to material colors if none is available. |
-| **Color Source: Material Color** | Uses each material's viewport diffuse color and the face material index. |
+| **Color Source: Material Settings** | Exports enabled VRML2 Material Studio `diffuseColor`, `emissiveColor`, `specularColor`, `ambientIntensity`, `shininess`, and `transparency` values. Ordinary Blender materials fall back to their viewport diffuse color. |
 | **Forward / Up** | Converts Blender coordinates to the target axis convention. Defaults remain forward `Z`, up `Y`. |
 | **Scale** | Multiplies exported coordinates by the selected value. |
 | **Path Mode** | Controls how image texture paths are written and whether Blender copies referenced files. |
@@ -124,7 +126,7 @@ of incorrectly sharing one `DEF`/`USE` geometry definition.
 - Mirrored (negative-scale) and sheared object transforms are baked into coordinates rather than instanced because VRML97 `Transform` scale values must be positive. Reflected geometry has its triangle winding corrected for one-sided VRML viewers.
 - Linked objects whose evaluated geometry differs because of modifiers, colors, or UV data are not combined.
 - A single VRML `creaseAngle` cannot represent arbitrary combinations of manually marked sharp edges; exact sharp-edge export is planned separately.
-- Blender shader node graphs are not converted to VRML materials.
+- Blender shader node graphs are not converted to VRML materials. VRML2 Material Studio's stored VRML values are supported directly.
 - The exporter uses the first usable image texture found in an object's node-based materials; it does not reproduce complex multi-texture shading.
 - Color alpha values are ignored because the current writer outputs RGB values.
 - Rounding is decimal-place based rather than significant-digit based. Inspect highly precise engineering or medical geometry before choosing very low values.

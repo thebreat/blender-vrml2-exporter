@@ -19,24 +19,123 @@ import bpy
 import bpy_extras
 
 
+_VRML2_MATERIAL_KEYS = {
+    "initialized": "vrml2_initialized",
+    "enabled": "vrml2_enabled",
+    "diffuse_color": "vrml2_diffuseColor",
+    "emissive_color": "vrml2_emissiveColor",
+    "specular_color": "vrml2_specularColor",
+    "ambient_intensity": "vrml2_ambientIntensity",
+    "shininess": "vrml2_shininess",
+    "transparency": "vrml2_transparency",
+}
+
+_VRML2_MATERIAL_DEFAULTS = {
+    "diffuse_color": (0.8, 0.8, 0.8),
+    "emissive_color": (0.0, 0.0, 0.0),
+    "specular_color": (0.0, 0.0, 0.0),
+    "ambient_intensity": 0.2,
+    "shininess": 0.2,
+    "transparency": 0.0,
+}
+
+
+def _clamp_material_value(value, default):
+    """Return one finite VRML material value in the required 0..1 range."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = float(default)
+    if not math.isfinite(number):
+        number = float(default)
+    return min(1.0, max(0.0, number))
+
+
+def _clamp_material_color(value, default):
+    """Return three finite VRML material color values in the 0..1 range."""
+    try:
+        components = tuple(value)
+    except TypeError:
+        components = ()
+    if len(components) < 3:
+        components = default
+    return tuple(
+        _clamp_material_value(component, fallback)
+        for component, fallback in zip(components[:3], default)
+    )
+
+
+def _material_studio_settings(material):
+    """Read VRML2 Material Studio data without importing or requiring that add-on."""
+    if material is None:
+        return None
+    try:
+        initialized = bool(material.get(_VRML2_MATERIAL_KEYS["initialized"], False))
+        enabled = bool(material.get(_VRML2_MATERIAL_KEYS["enabled"], False))
+    except (AttributeError, TypeError):
+        return None
+    if not initialized or not enabled:
+        return None
+
+    settings = {}
+    for field in ("diffuse_color", "emissive_color", "specular_color"):
+        default = _VRML2_MATERIAL_DEFAULTS[field]
+        settings[field] = _clamp_material_color(
+            material.get(_VRML2_MATERIAL_KEYS[field], default),
+            default,
+        )
+    for field in ("ambient_intensity", "shininess", "transparency"):
+        default = _VRML2_MATERIAL_DEFAULTS[field]
+        settings[field] = _clamp_material_value(
+            material.get(_VRML2_MATERIAL_KEYS[field], default),
+            default,
+        )
+    return settings
+
+
+def _material_export_settings(material):
+    """Return full Material Studio data or a compatible viewport-color fallback."""
+    studio_settings = _material_studio_settings(material)
+    if studio_settings is not None:
+        return studio_settings
+
+    if material is None:
+        diffuse_color = (1.0, 1.0, 1.0)
+    else:
+        diffuse_color = getattr(material, "diffuse_color", (1.0, 1.0, 1.0))
+    return {
+        "diffuse_color": _clamp_material_color(
+            diffuse_color,
+            (1.0, 1.0, 1.0),
+        )
+    }
+
+
+def _guess_material_image(material):
+    """Return the first usable image texture from one Blender material."""
+    if material is None or not material.use_nodes or material.node_tree is None:
+        return None
+
+    active_node = getattr(material.node_tree.nodes, "active", None)
+    if (
+        active_node is not None
+        and active_node.type == "TEX_IMAGE"
+        and getattr(active_node, "image", None) is not None
+    ):
+        return active_node.image
+
+    for node in material.node_tree.nodes:
+        if node.type == "TEX_IMAGE" and getattr(node, "image", None) is not None:
+            return node.image
+    return None
+
+
 def _guess_object_image(obj):
     """Return the first usable image texture from an object's materials."""
     for slot in obj.material_slots:
-        material = slot.material
-        if material is None or not material.use_nodes or material.node_tree is None:
-            continue
-
-        active_node = getattr(material.node_tree.nodes, "active", None)
-        if (
-            active_node is not None
-            and active_node.type == "TEX_IMAGE"
-            and getattr(active_node, "image", None) is not None
-        ):
-            return active_node.image
-
-        for node in material.node_tree.nodes:
-            if node.type == "TEX_IMAGE" and getattr(node, "image", None) is not None:
-                return node.image
+        image = _guess_material_image(slot.material)
+        if image is not None:
+            return image
 
     return None
 
@@ -655,6 +754,34 @@ def _mesh_data_identity(obj):
     return as_pointer() if as_pointer is not None else id(mesh)
 
 
+def _write_material_node(fw, settings, indent, decimal_places):
+    """Write one VRML Material node from normalized export settings."""
+    material_decimals = min(decimal_places, 4)
+    fw(f"{indent}material Material {{\n")
+    for field, vrml_name in (
+        ("diffuse_color", "diffuseColor"),
+        ("emissive_color", "emissiveColor"),
+        ("specular_color", "specularColor"),
+    ):
+        if field not in settings:
+            continue
+        color_text = " ".join(
+            _format_float(value, material_decimals)
+            for value in settings[field]
+        )
+        fw(f"{indent}\t{vrml_name} {color_text}\n")
+    for field, vrml_name in (
+        ("ambient_intensity", "ambientIntensity"),
+        ("shininess", "shininess"),
+        ("transparency", "transparency"),
+    ):
+        if field not in settings:
+            continue
+        value_text = _format_float(settings[field], material_decimals)
+        fw(f"{indent}\t{vrml_name} {value_text}\n")
+    fw(f"{indent}}}\n")
+
+
 def save_bmesh(
     fw,
     bm,
@@ -674,6 +801,7 @@ def save_bmesh(
     decimal_places=6,
     deduplicate_uvs=True,
     crease_angle=0.0,
+    material_settings=None,
 ):
     """Write one triangulated BMesh as a VRML Shape node."""
     base_src = os.path.dirname(bpy.data.filepath) or os.getcwd()
@@ -682,18 +810,21 @@ def save_bmesh(
         and color_type == "MATERIAL"
         and len(material_colors) == 1
     )
+    if material_settings is None:
+        material_settings = [
+            {"diffuse_color": tuple(color)}
+            for color in material_colors
+        ]
 
     fw(f"{indent}Shape {{\n")
     fw(f"{indent}\tappearance Appearance {{\n")
     if single_material_color:
-        color_decimals = min(decimal_places, 4)
-        color_text = " ".join(
-            _format_float(value, color_decimals)
-            for value in material_colors[0]
+        settings = (
+            material_settings[0]
+            if material_settings
+            else {"diffuse_color": tuple(material_colors[0])}
         )
-        fw(f"{indent}\t\tmaterial Material {{\n")
-        fw(f"{indent}\t\t\tdiffuseColor {color_text}\n")
-        fw(f"{indent}\t\t}}\n")
+        _write_material_node(fw, settings, f"{indent}\t\t", decimal_places)
     elif not use_uv:
         fw(f"{indent}\t\tmaterial Material {{\n")
         fw(f"{indent}\t\t}}\n")
@@ -770,6 +901,29 @@ def save_bmesh(
     return reused
 
 
+def _face_material_index(face, material_count):
+    """Return a valid material index for one face, matching Blender's fallback."""
+    material_index = getattr(face, "material_index", 0)
+    if material_index < 0 or material_index >= material_count:
+        return 0
+    return material_index
+
+
+def _material_bmesh_subset(bm, material_index, material_count):
+    """Copy only the faces assigned to one material into a compact BMesh."""
+    subset = bm.copy()
+    other_faces = [
+        face
+        for face in subset.faces
+        if _face_material_index(face, material_count) != material_index
+    ]
+    if other_faces:
+        bmesh.ops.delete(subset, geom=other_faces, context="FACES")
+    subset.verts.index_update()
+    subset.faces.index_update()
+    return subset
+
+
 def save_object(
     fw,
     global_matrix,
@@ -827,7 +981,9 @@ def save_object(
         bm.verts.index_update()
         bm.faces.index_update()
 
+        materials = []
         material_colors = []
+        material_settings = []
         color_domain = None
         color_layer = None
         uv_image = None
@@ -839,48 +995,116 @@ def save_object(
                     color_type = "MATERIAL"
 
             if color_type == "MATERIAL":
-                if not mesh.materials:
+                material_object = obj_eval if obj_eval is not None else obj
+                materials = [slot.material for slot in material_object.material_slots]
+                if not materials:
+                    materials = list(mesh.materials)
+                if not materials:
                     use_color = False
                 else:
+                    material_settings = [
+                        _material_export_settings(material)
+                        for material in materials
+                    ]
                     material_colors = [
-                        tuple(material.diffuse_color[:3])
-                        if material is not None
-                        else (1.0, 1.0, 1.0)
-                        for material in mesh.materials
+                        settings["diffuse_color"]
+                        for settings in material_settings
                     ]
 
         if use_uv:
             if bm.loops.layers.uv.active is None:
                 use_uv = False
-            else:
-                uv_image = _guess_object_image(obj)
-                if uv_image is None or not getattr(uv_image, "filepath", ""):
-                    use_uv = False
+
+        material_count = len(material_settings)
+        used_material_indices = (
+            sorted(
+                {
+                    _face_material_index(face, material_count)
+                    for face in bm.faces
+                }
+            )
+            if material_count
+            else []
+        )
+        split_material_shapes = (
+            use_color
+            and color_type == "MATERIAL"
+            and material_count > 1
+            and bool(used_material_indices)
+            and any(
+                len(material_settings[index]) > 1
+                for index in used_material_indices
+            )
+        )
+
+        if use_uv and not split_material_shapes:
+            uv_image = _guess_object_image(obj)
+            if uv_image is None or not getattr(uv_image, "filepath", ""):
+                use_uv = False
 
         if transform is not None:
             _write_transform_start(fw, transform, decimal_places)
 
         reusable_geometry_cache = geometry_cache if transform is not None else None
-        reused = save_bmesh(
-            fw,
-            bm,
-            base_dst,
-            use_color,
-            color_type,
-            material_colors,
-            color_domain,
-            color_layer,
-            use_uv,
-            uv_image,
-            path_mode,
-            copy_set,
-            reusable_geometry_cache,
-            geometry_group if reusable_geometry_cache is not None else None,
-            "\t\t" if transform is not None else "",
-            decimal_places,
-            deduplicate_uvs,
-            crease_angle,
-        )
+        reused = 0
+        if split_material_shapes:
+            for material_index in used_material_indices:
+                subset = _material_bmesh_subset(bm, material_index, material_count)
+                try:
+                    subset_image = (
+                        _guess_material_image(materials[material_index])
+                        if use_uv
+                        else None
+                    )
+                    subset_use_uv = bool(
+                        subset_image is not None
+                        and getattr(subset_image, "filepath", "")
+                    )
+                    reused += save_bmesh(
+                        fw,
+                        subset,
+                        base_dst,
+                        True,
+                        "MATERIAL",
+                        [material_colors[material_index]],
+                        None,
+                        None,
+                        subset_use_uv,
+                        subset_image,
+                        path_mode,
+                        copy_set,
+                        reusable_geometry_cache,
+                        geometry_group if reusable_geometry_cache is not None else None,
+                        "\t\t" if transform is not None else "",
+                        decimal_places,
+                        deduplicate_uvs,
+                        crease_angle,
+                        [material_settings[material_index]],
+                    )
+                finally:
+                    subset.free()
+        else:
+            reused = save_bmesh(
+                fw,
+                bm,
+                base_dst,
+                use_color,
+                color_type,
+                material_colors,
+                color_domain,
+                color_layer,
+                use_uv,
+                uv_image,
+                path_mode,
+                copy_set,
+                reusable_geometry_cache,
+                geometry_group if reusable_geometry_cache is not None else None,
+                "\t\t" if transform is not None else "",
+                decimal_places,
+                deduplicate_uvs,
+                crease_angle,
+                material_settings,
+            )
         if transform is not None:
             fw("\t]\n")
             fw("}\n")

@@ -110,6 +110,44 @@ assert writer._format_float(-0.0001, 3) == '0'
 assert writer._format_float(1.23456, 3) == '1.235'
 
 
+class FakeMaterial(dict):
+    def __init__(self, diffuse_color, **values):
+        super().__init__(values)
+        self.diffuse_color = diffuse_color
+
+
+studio_material = FakeMaterial(
+    (0.9, 0.9, 0.9, 1.0),
+    vrml2_initialized=True,
+    vrml2_enabled=True,
+    vrml2_diffuseColor=(0.1, 0.2, 0.3),
+    vrml2_emissiveColor=(0.01, 0.02, 0.03),
+    vrml2_specularColor=(0.4, 0.5, 0.6),
+    vrml2_ambientIntensity=0.25,
+    vrml2_shininess=0.7,
+    vrml2_transparency=0.4,
+)
+studio_settings = writer._material_export_settings(studio_material)
+assert studio_settings == {
+    'diffuse_color': (0.1, 0.2, 0.3),
+    'emissive_color': (0.01, 0.02, 0.03),
+    'specular_color': (0.4, 0.5, 0.6),
+    'ambient_intensity': 0.25,
+    'shininess': 0.7,
+    'transparency': 0.4,
+}
+
+disabled_studio_material = FakeMaterial(
+    (0.75, 0.5, 0.25, 1.0),
+    vrml2_initialized=True,
+    vrml2_enabled=False,
+    vrml2_diffuseColor=(0.1, 0.2, 0.3),
+)
+assert writer._material_export_settings(disabled_studio_material) == {
+    'diffuse_color': (0.75, 0.5, 0.25),
+}
+
+
 class NodesModifier(dict):
     def __init__(self, angle, *, show_viewport=True):
         super().__init__(AngleSocket=angle)
@@ -665,6 +703,33 @@ assert 'diffuseColor 0.25 0.5 0.75' in material_content
 assert 'colorPerVertex' not in material_content
 assert 'colorIndex [' not in material_content
 
+# VRML2 Material Studio's stored values become a complete VRML Material node.
+with tempfile.NamedTemporaryFile('w+', suffix='.wrl', encoding='utf-8', delete=False) as handle:
+    writer.save_bmesh(
+        handle.write,
+        bm,
+        '/tmp/export destination',
+        True,
+        'MATERIAL',
+        [studio_settings['diffuse_color']],
+        None,
+        None,
+        False,
+        None,
+        'AUTO',
+        set(),
+        material_settings=[studio_settings],
+    )
+    handle.flush()
+    material_studio_content = Path(handle.name).read_text(encoding='utf-8')
+
+assert 'diffuseColor 0.1 0.2 0.3' in material_studio_content
+assert 'emissiveColor 0.01 0.02 0.03' in material_studio_content
+assert 'specularColor 0.4 0.5 0.6' in material_studio_content
+assert 'ambientIntensity 0.25' in material_studio_content
+assert 'shininess 0.7' in material_studio_content
+assert 'transparency 0.4' in material_studio_content
+
 # Multiple material colors still require per-face color indexing.
 with tempfile.NamedTemporaryFile('w+', suffix='.wrl', encoding='utf-8', delete=False) as handle:
     writer.save_bmesh(
@@ -793,6 +858,7 @@ for generated in (
     cleaned_content,
     point_content,
     material_content,
+    material_studio_content,
     multiple_material_content,
     texture_content,
     thin_content,
