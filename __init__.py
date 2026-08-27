@@ -80,8 +80,8 @@ class ExportVRML(bpy.types.Operator, ExportHelper):
     )
 
     use_color: BoolProperty(
-        name="Colors",
-        description="Export the active color attribute or material colors",
+        name="Colors / Materials",
+        description="Export the active color attribute or Blender and VRML2 material settings",
         default=True,
     )
 
@@ -89,7 +89,11 @@ class ExportVRML(bpy.types.Operator, ExportHelper):
         name="Color Source",
         items=(
             ("VERTEX", "Color Attribute", "Use the active mesh color attribute"),
-            ("MATERIAL", "Material Color", "Use material viewport colors"),
+            (
+                "MATERIAL",
+                "Material Settings",
+                "Use VRML2 Material Studio settings when available, otherwise use material viewport colors",
+            ),
         ),
         default="VERTEX",
     )

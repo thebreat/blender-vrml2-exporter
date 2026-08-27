@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gzip
 import importlib.util
+import math
 import os
 import stat
 import sys
@@ -109,6 +110,122 @@ assert writer._format_float(-0.0001, 3) == '0'
 assert writer._format_float(1.23456, 3) == '1.235'
 
 
+class FakeMaterial(dict):
+    def __init__(self, diffuse_color, **values):
+        super().__init__(values)
+        self.diffuse_color = diffuse_color
+
+
+studio_material = FakeMaterial(
+    (0.9, 0.9, 0.9, 1.0),
+    vrml2_initialized=True,
+    vrml2_enabled=True,
+    vrml2_diffuseColor=(0.1, 0.2, 0.3),
+    vrml2_emissiveColor=(0.01, 0.02, 0.03),
+    vrml2_specularColor=(0.4, 0.5, 0.6),
+    vrml2_ambientIntensity=0.25,
+    vrml2_shininess=0.7,
+    vrml2_transparency=0.4,
+)
+studio_settings = writer._material_export_settings(studio_material)
+assert studio_settings == {
+    'diffuse_color': (0.1, 0.2, 0.3),
+    'emissive_color': (0.01, 0.02, 0.03),
+    'specular_color': (0.4, 0.5, 0.6),
+    'ambient_intensity': 0.25,
+    'shininess': 0.7,
+    'transparency': 0.4,
+}
+
+disabled_studio_material = FakeMaterial(
+    (0.75, 0.5, 0.25, 1.0),
+    vrml2_initialized=True,
+    vrml2_enabled=False,
+    vrml2_diffuseColor=(0.1, 0.2, 0.3),
+)
+assert writer._material_export_settings(disabled_studio_material) == {
+    'diffuse_color': (0.75, 0.5, 0.25),
+}
+
+
+class NodesModifier(dict):
+    def __init__(self, angle, *, show_viewport=True):
+        super().__init__(AngleSocket=angle)
+        self.type = 'NODES'
+        self.name = 'Smooth by Angle'
+        self.show_viewport = show_viewport
+        angle_socket = types.SimpleNamespace(
+            item_type='SOCKET',
+            in_out='INPUT',
+            name='Angle',
+            identifier='AngleSocket',
+        )
+        self.node_group = types.SimpleNamespace(
+            name='Smooth by Angle',
+            interface=types.SimpleNamespace(items_tree=[angle_socket]),
+        )
+
+
+class Blender52NodesModifier:
+    def __init__(self, angle):
+        self.type = 'NODES'
+        self.name = 'Smooth by Angle'
+        self.show_viewport = True
+        angle_socket = types.SimpleNamespace(
+            item_type='SOCKET',
+            in_out='INPUT',
+            name='Angle',
+            identifier='Input_1',
+        )
+        self.node_group = types.SimpleNamespace(
+            name='Smooth by Angle',
+            interface=types.SimpleNamespace(items_tree=[angle_socket]),
+        )
+        self.properties = types.SimpleNamespace(
+            inputs=types.SimpleNamespace(
+                Input_1=types.SimpleNamespace(value=angle)
+            )
+        )
+
+    def get(self, identifier):
+        del identifier
+        raise TypeError("this type doesn't support IDProperties")
+
+
+thirty_degree_modifier = NodesModifier(math.radians(30.0))
+forty_five_degree_modifier = NodesModifier(math.radians(45.0))
+ninety_degree_modifier = NodesModifier(math.radians(90.0))
+assert math.isclose(
+    writer._smooth_by_angle_modifier_angle(
+        types.SimpleNamespace(modifiers=[thirty_degree_modifier])
+    ),
+    math.radians(30.0),
+)
+assert math.isclose(
+    writer._smooth_by_angle_modifier_angle(
+        types.SimpleNamespace(modifiers=[forty_five_degree_modifier])
+    ),
+    math.radians(45.0),
+)
+assert math.isclose(
+    writer._smooth_by_angle_modifier_angle(
+        types.SimpleNamespace(modifiers=[ninety_degree_modifier])
+    ),
+    math.radians(90.0),
+)
+assert math.isclose(
+    writer._smooth_by_angle_modifier_angle(
+        types.SimpleNamespace(
+            modifiers=[Blender52NodesModifier(math.radians(45.0))]
+        )
+    ),
+    math.radians(45.0),
+)
+assert writer._smooth_by_angle_modifier_angle(
+    types.SimpleNamespace(modifiers=[NodesModifier(math.radians(30.0), show_viewport=False)])
+) is None
+
+
 class LayerSet:
     def __init__(self, active=None):
         self.active = active
@@ -172,6 +289,15 @@ class BMesh:
 
 
 bm = BMesh()
+assert writer._crease_angle_for_mesh(
+    types.SimpleNamespace(modifiers=[thirty_degree_modifier]), bm, True
+) == math.radians(30.0)
+assert writer._crease_angle_for_mesh(types.SimpleNamespace(modifiers=[]), bm, True) == 0.0
+for face in bm.faces:
+    face.smooth = True
+assert writer._crease_angle_for_mesh(
+    types.SimpleNamespace(modifiers=[]), bm, True
+) == math.pi
 with tempfile.NamedTemporaryFile('w+', suffix='.wrl', encoding='utf-8', delete=False) as handle:
     writer.save_bmesh(
         handle.write,
@@ -194,6 +320,75 @@ assert 'colorPerVertex TRUE' in content
 assert 'colorIndex [ 0 1 2 -1 ]' in content
 assert 'coordIndex [ 0 1 2 -1 ]' in content
 assert 'color [ 1 0 0 0 1 0 0 0 1 ]' in content
+
+# Blender smoothing angles are exported as VRML radians. Crease angle is part
+# of reusable geometry, so otherwise-identical meshes with different shading
+# thresholds remain independent.
+smoothing_cache = {}
+with tempfile.NamedTemporaryFile('w+', suffix='.wrl', encoding='utf-8', delete=False) as handle:
+    writer.save_bmesh(
+        handle.write,
+        bm,
+        '/tmp',
+        False,
+        'MATERIAL',
+        [],
+        None,
+        None,
+        False,
+        None,
+        'AUTO',
+        set(),
+        smoothing_cache,
+        ('LINKED', 3003),
+        decimal_places=0,
+        crease_angle=math.radians(30.0),
+    )
+    writer.save_bmesh(
+        handle.write,
+        bm,
+        '/tmp',
+        False,
+        'MATERIAL',
+        [],
+        None,
+        None,
+        False,
+        None,
+        'AUTO',
+        set(),
+        smoothing_cache,
+        ('LINKED', 3003),
+        crease_angle=math.radians(45.0),
+    )
+    handle.flush()
+    smoothing_content = Path(handle.name).read_text(encoding='utf-8')
+
+assert 'creaseAngle 0.523599' in smoothing_content
+assert 'creaseAngle 0.785398' in smoothing_content
+assert smoothing_content.count('geometry DEF ') == 2
+assert 'geometry USE ' not in smoothing_content
+
+with tempfile.NamedTemporaryFile('w+', suffix='.wrl', encoding='utf-8', delete=False) as handle:
+    writer.save_bmesh(
+        handle.write,
+        bm,
+        '/tmp',
+        False,
+        'MATERIAL',
+        [],
+        None,
+        None,
+        False,
+        None,
+        'AUTO',
+        set(),
+        crease_angle=math.pi,
+    )
+    handle.flush()
+    fully_smooth_content = Path(handle.name).read_text(encoding='utf-8')
+
+assert 'creaseAngle 3.141593' in fully_smooth_content
 
 # Requested coordinate rounding automatically retains enough precision to
 # prevent a valid thin triangle from collapsing.
@@ -360,12 +555,19 @@ assert writer._decompose_vrml_transform(positive_non_uniform) == (
 )
 
 mirrored = TransformMatrix(
-    positive_non_uniform,
+    (
+        (-2.0, 0.0, 0.0, 4.0),
+        (0.0, 1.0, 0.0, 5.0),
+        (0.0, 0.0, 0.5, 6.0),
+        (0.0, 0.0, 0.0, 1.0),
+    ),
     (4.0, 5.0, 6.0),
     identity_rotation,
     (-2.0, 1.0, 0.5),
 )
 assert writer._decompose_vrml_transform(mirrored) is None
+assert writer._matrix_flips_winding(mirrored) is True
+assert writer._matrix_flips_winding(positive_non_uniform) is False
 
 sheared = TransformMatrix(
     (
@@ -379,6 +581,33 @@ sheared = TransformMatrix(
     (2.0, 1.0, 0.5),
 )
 assert writer._decompose_vrml_transform(sheared) is None
+assert writer._matrix_flips_winding(sheared) is False
+
+
+class TransformCapture:
+    def __init__(self):
+        self.faces = [object(), object()]
+        self.transformed_with = None
+        self.reversed_faces = None
+
+    def transform(self, matrix):
+        self.transformed_with = matrix
+
+
+def reverse_faces(bm_value, *, faces):
+    bm_value.reversed_faces = faces
+
+
+bmesh.ops = types.SimpleNamespace(reverse_faces=reverse_faces)
+positive_capture = TransformCapture()
+writer._apply_baked_transform(positive_capture, positive_non_uniform)
+assert positive_capture.transformed_with is positive_non_uniform
+assert positive_capture.reversed_faces is None
+
+mirrored_capture = TransformCapture()
+writer._apply_baked_transform(mirrored_capture, mirrored)
+assert mirrored_capture.transformed_with is mirrored
+assert mirrored_capture.reversed_faces == mirrored_capture.faces
 
 # The export coordinator distinguishes intentional Blender links from
 # independent objects before the heavier Blender mesh conversion begins.
@@ -473,6 +702,33 @@ with tempfile.NamedTemporaryFile('w+', suffix='.wrl', encoding='utf-8', delete=F
 assert 'diffuseColor 0.25 0.5 0.75' in material_content
 assert 'colorPerVertex' not in material_content
 assert 'colorIndex [' not in material_content
+
+# VRML2 Material Studio's stored values become a complete VRML Material node.
+with tempfile.NamedTemporaryFile('w+', suffix='.wrl', encoding='utf-8', delete=False) as handle:
+    writer.save_bmesh(
+        handle.write,
+        bm,
+        '/tmp/export destination',
+        True,
+        'MATERIAL',
+        [studio_settings['diffuse_color']],
+        None,
+        None,
+        False,
+        None,
+        'AUTO',
+        set(),
+        material_settings=[studio_settings],
+    )
+    handle.flush()
+    material_studio_content = Path(handle.name).read_text(encoding='utf-8')
+
+assert 'diffuseColor 0.1 0.2 0.3' in material_studio_content
+assert 'emissiveColor 0.01 0.02 0.03' in material_studio_content
+assert 'specularColor 0.4 0.5 0.6' in material_studio_content
+assert 'ambientIntensity 0.25' in material_studio_content
+assert 'shininess 0.7' in material_studio_content
+assert 'transparency 0.4' in material_studio_content
 
 # Multiple material colors still require per-face color indexing.
 with tempfile.NamedTemporaryFile('w+', suffix='.wrl', encoding='utf-8', delete=False) as handle:
@@ -602,11 +858,14 @@ for generated in (
     cleaned_content,
     point_content,
     material_content,
+    material_studio_content,
     multiple_material_content,
     texture_content,
     thin_content,
     deduplicated_uv_content,
     thin_uv_content,
+    smoothing_content,
+    fully_smooth_content,
 ):
     assert generated.count('{') == generated.count('}')
     assert generated.count('[') == generated.count(']')
