@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gzip
+import io
 import importlib.util
 import math
 import os
@@ -12,12 +13,25 @@ from pathlib import Path
 
 SOURCE = Path(os.environ.get('VRML2_SOURCE', Path(__file__).resolve().parents[1]))
 
+# Importing the exporter would otherwise leave __pycache__ directories in the
+# checkout, which has no .gitignore entry for them by design.
+sys.dont_write_bytecode = True
+
 
 # Minimal module stubs for importing the extension outside Blender.
 bpy = types.ModuleType('bpy')
 bpy.data = types.SimpleNamespace(filepath='/tmp/project/example.blend')
+def _stub_abspath(path, start=None, library=None):
+    """Resolve Blender's '//' blend-relative prefix the way bpy.path.abspath does."""
+    del library
+    if path.startswith('//'):
+        base = start if start is not None else os.path.dirname(bpy.data.filepath)
+        return os.path.join(base, path[2:])
+    return path
+
+
 bpy.path = types.SimpleNamespace(
-    abspath=lambda path, library=None: path,
+    abspath=_stub_abspath,
     ensure_ext=lambda path, ext: path if path.endswith(ext) else path + ext,
 )
 bpy.utils = types.SimpleNamespace(register_class=lambda cls: None, unregister_class=lambda cls: None)
@@ -779,6 +793,184 @@ with tempfile.NamedTemporaryFile('w+', suffix='.wrl', encoding='utf-8', delete=F
 assert 'texCoordIndex [ 0 1 2 -1 ]' in texture_content
 assert 'point [ 0 0 1 0 0 1 ]' in texture_content
 assert '\"/tmp/textures/a \\"quoted\\" file.png\"' in texture_content
+
+# The exporter must honour Blender's selected path mode instead of appending its
+# own machine-local absolute fallback. This stand-in mirrors the documented
+# behaviour of bpy_extras.io_utils.path_reference for each supported mode.
+SENSITIVE_TEXTURE = '/home/example/Private Project/client/textures/example.png'
+
+
+def fake_path_reference(
+    filepath,
+    base_src,
+    base_dst,
+    mode='AUTO',
+    copy_subdir='',
+    copy_set=None,
+    library=None,
+):
+    # Blender decides Match from the '//' prefix on the incoming path, before
+    # resolving it, so the writer has to pass the stored path rather than an
+    # already-absolute one.
+    is_relative = filepath.startswith('//')
+    filepath_abs = os.path.normpath(
+        bpy.path.abspath(filepath, start=base_src, library=library)
+    )
+    is_subdir = filepath_abs.startswith(os.path.normpath(base_dst) + os.sep)
+    if mode == 'MATCH':
+        mode = 'RELATIVE' if is_relative else 'ABSOLUTE'
+    elif mode == 'AUTO':
+        mode = 'RELATIVE' if is_subdir else 'ABSOLUTE'
+    elif mode == 'COPY':
+        subdir_abs = os.path.normpath(base_dst)
+        if copy_subdir:
+            subdir_abs = os.path.join(subdir_abs, copy_subdir)
+        filepath_cpy = os.path.join(subdir_abs, os.path.basename(filepath_abs))
+        copy_set.add((filepath_abs, filepath_cpy))
+        filepath_abs = filepath_cpy
+        mode = 'RELATIVE'
+
+    if mode == 'ABSOLUTE':
+        return filepath_abs
+    if mode == 'RELATIVE':
+        try:
+            return os.path.relpath(filepath_abs, base_dst)
+        except ValueError:
+            return filepath_abs
+    if mode == 'STRIP':
+        return os.path.basename(filepath_abs)
+    raise AssertionError(f'Unexpected path mode: {mode!r}')
+
+
+def urls_for_path_mode(
+    mode,
+    base_dst='/tmp/export destination',
+    filepath=None,
+):
+    """Return the ImageTexture url list the writer produces for one path mode."""
+    sensitive_image = types.SimpleNamespace(
+        filepath=SENSITIVE_TEXTURE if filepath is None else filepath,
+        library=None,
+    )
+    original_path_reference = io_utils.path_reference
+    io_utils.path_reference = fake_path_reference
+    try:
+        buffer = io.StringIO()
+        writer.save_bmesh(
+            buffer.write,
+            bm,
+            base_dst,
+            False,
+            'MATERIAL',
+            [],
+            None,
+            None,
+            True,
+            sensitive_image,
+            mode,
+            set(),
+        )
+    finally:
+        io_utils.path_reference = original_path_reference
+
+    for line in buffer.getvalue().splitlines():
+        stripped = line.strip()
+        if stripped.startswith('url ['):
+            return stripped[len('url ['):].rsplit(']', 1)[0].strip()
+    raise AssertionError(f'No url written for path mode {mode!r}')
+
+
+# Modes that resolve to an absolute reference keep exactly one absolute URL and
+# do not repeat it. This is Blender's own resolution, not an exporter addition.
+for absolute_mode in ('AUTO', 'ABSOLUTE', 'MATCH'):
+    absolute_urls = urls_for_path_mode(absolute_mode)
+    assert absolute_urls == f'"{SENSITIVE_TEXTURE}" "example.png"', (
+        absolute_mode,
+        absolute_urls,
+    )
+
+# Relative mode already avoided the machine-local fallback and must stay that way.
+# A relative reference may still traverse upwards with '..'; that is Blender's own
+# RELATIVE resolution, not an absolute path the exporter added.
+relative_urls = urls_for_path_mode('RELATIVE')
+assert relative_urls == (
+    '"../../home/example/Private Project/client/textures/example.png" "example.png"'
+), relative_urls
+assert f'"{SENSITIVE_TEXTURE}"' not in relative_urls, relative_urls
+
+# Strip mode means "filename only"; the source directory must not survive.
+strip_urls = urls_for_path_mode('STRIP')
+assert strip_urls == '"example.png"', strip_urls
+assert SENSITIVE_TEXTURE not in strip_urls, strip_urls
+
+# Copy mode points at the copied asset beside the export, never at the original.
+copy_urls = urls_for_path_mode('COPY')
+assert copy_urls == '"textures/example.png" "example.png"', copy_urls
+assert SENSITIVE_TEXTURE not in copy_urls, copy_urls
+
+# Auto resolves to a relative reference when the texture already sits under the
+# export directory. That case is not Strip or Copy, and it must not gain an
+# absolute alternative either.
+INSIDE_TEXTURE = '/tmp/export destination/textures/example.png'
+inside_urls = urls_for_path_mode('AUTO', filepath=INSIDE_TEXTURE)
+assert inside_urls == '"textures/example.png" "example.png"', inside_urls
+assert INSIDE_TEXTURE not in inside_urls, inside_urls
+
+# Match follows the stored path: absolute in, absolute out.
+match_absolute_urls = urls_for_path_mode('MATCH')
+assert match_absolute_urls == f'"{SENSITIVE_TEXTURE}" "example.png"', (
+    match_absolute_urls
+)
+
+# Match with a Blender-relative '//' path must resolve relative instead. This
+# only works if the writer passes the stored path to path_reference; resolving
+# it to an absolute path first destroys the '//' marker Match depends on.
+RELATIVE_TEXTURE = '//client textures/example.png'
+match_relative_urls = urls_for_path_mode('MATCH', filepath=RELATIVE_TEXTURE)
+assert match_relative_urls == (
+    '"../project/client textures/example.png" "example.png"'
+), match_relative_urls
+assert '"/tmp/project/client textures/example.png"' not in match_relative_urls, (
+    match_relative_urls
+)
+
+# Relative and Match agree for a '//' path, because that is what Match matched.
+assert urls_for_path_mode('RELATIVE', filepath=RELATIVE_TEXTURE) == (
+    match_relative_urls
+)
+
+# A textured Shape is still a lit Shape. VRML97 4.14.2 makes a Shape unlit when
+# Appearance.material is NULL, and 4.14.2 table 4.5 then renders an RGB texture
+# flat at full brightness. Every Appearance the writer emits therefore carries a
+# material node, matching the untextured branch that already did so.
+lit_texture_bm = BMesh()
+lit_texture_bm.loops.layers.uv.active = 'uv_layer'
+unlit_checks = (
+    ('vertex colours', True, 'VERTEX', 'CORNER', 'corner_color', []),
+    ('colours disabled', False, 'MATERIAL', None, None, []),
+    ('multiple materials', True, 'MATERIAL', None, None,
+     [(0.25, 0.5, 0.75), (1.0, 0.0, 0.0)]),
+)
+for label, textured_use_color, textured_color_type, domain, layer, colors in unlit_checks:
+    buffer = io.StringIO()
+    writer.save_bmesh(
+        buffer.write,
+        lit_texture_bm,
+        '/tmp',
+        textured_use_color,
+        textured_color_type,
+        colors,
+        domain,
+        layer,
+        True,
+        image,
+        'AUTO',
+        set(),
+    )
+    textured_appearance = buffer.getvalue()
+    assert 'texture ImageTexture {' in textured_appearance, label
+    assert 'material Material {' in textured_appearance, (label, textured_appearance)
+
 
 # Repeated UV coordinates are written once and referenced by index.
 duplicate_uv_bm = BMesh()

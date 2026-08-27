@@ -41,6 +41,9 @@ A maintained Blender Extension for exporting mesh objects to **VRML 2.0 (`.wrl`)
   - Falls back to material viewport colors when no active color attribute is available.
 - Exports the active UV map and the first usable image texture found in the object's node-based materials.
 - Supports Blender's path modes and can copy referenced textures when the selected path mode requires it.
+- Writes texture URLs using the selected path mode, so a mode that asks for a relative, stripped, or copied reference does not also record the original texture location from the exporting machine.
+- Honours **Match** by keeping a Blender-relative texture path relative and an absolute one absolute.
+- Writes a `Material` node in every exported `Appearance`, so textured shapes stay lit instead of rendering unshaded.
 - Reports export failures in Blender instead of failing silently.
 
 ## Install the packaged extension
@@ -113,7 +116,7 @@ of incorrectly sharing one `DEF`/`USE` geometry definition.
 | **Color Source: Material Settings** | Exports enabled VRML2 Material Studio `diffuseColor`, `emissiveColor`, `specularColor`, `ambientIntensity`, `shininess`, and `transparency` values. Ordinary Blender materials fall back to their viewport diffuse color. |
 | **Forward / Up** | Converts Blender coordinates to the target axis convention. Defaults remain forward `Z`, up `Y`. |
 | **Scale** | Multiplies exported coordinates by the selected value. |
-| **Path Mode** | Controls how image texture paths are written and whether Blender copies referenced files. |
+| **Path Mode** | Controls how image texture paths are written and whether Blender copies referenced files. The exported URL follows the selected mode, including **Match**, which keeps a Blender-relative path relative. A bare file name is added as an additional VRML alternative for viewers that resolve textures beside the `.wrl`. |
 | **Decimal Places** | Rounds coordinates, transforms, UVs, and colors from 0 to 9 decimal places. The default is 6. Thin geometry, small mapped UV triangles, and very small positive scales automatically retain additional precision when necessary. |
 | **Include Object Name Comments** | Keeps object names in the WRL as human-readable comments. Disable it for a small file-size saving. |
 | **Compact Output** | Removes indentation and blank lines while keeping valid VRML syntax. |
