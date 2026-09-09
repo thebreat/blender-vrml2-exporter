@@ -2,6 +2,11 @@
 
 All notable changes to this maintained fork are recorded here.
 
+## Unreleased
+
+- Preserved Blender edges marked Sharp when exporting meshes with a positive VRML `creaseAngle`.
+- Limited sharp-edge coordinate splitting to boundaries that `creaseAngle` would otherwise smooth, avoiding redundant file-size growth on angle-generated sharp edges.
+
 ## 0.5.0 - 2026-08-26
 
 - Added automatic conversion of Blender Shade Smooth and Smooth by Angle settings to VRML `creaseAngle` radians.

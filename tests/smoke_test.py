@@ -298,6 +298,46 @@ for face in bm.faces:
 assert writer._crease_angle_for_mesh(
     types.SimpleNamespace(modifiers=[]), bm, True
 ) == math.pi
+
+
+class SmoothingEdge:
+    def __init__(self, *, smooth, angle, face_count=2):
+        self.smooth = smooth
+        self._angle = angle
+        self.link_faces = [object() for _index in range(face_count)]
+
+    def calc_face_angle(self):
+        return self._angle
+
+
+manual_sharp_edge = SmoothingEdge(smooth=False, angle=math.radians(10.0))
+angle_sharp_edge = SmoothingEdge(smooth=False, angle=math.radians(60.0))
+ordinary_smooth_edge = SmoothingEdge(smooth=True, angle=math.radians(10.0))
+sharp_boundary_edge = SmoothingEdge(
+    smooth=False,
+    angle=math.radians(10.0),
+    face_count=1,
+)
+sharp_non_manifold_edge = SmoothingEdge(
+    smooth=False,
+    angle=math.radians(10.0),
+    face_count=3,
+)
+sharp_test_bm = types.SimpleNamespace(
+    edges=[
+        manual_sharp_edge,
+        angle_sharp_edge,
+        ordinary_smooth_edge,
+        sharp_boundary_edge,
+        sharp_non_manifold_edge,
+    ]
+)
+assert writer._sharp_edges_requiring_split(
+    sharp_test_bm,
+    math.radians(45.0),
+) == [manual_sharp_edge, sharp_non_manifold_edge]
+assert writer._sharp_edges_requiring_split(sharp_test_bm, 0.0) == []
+
 with tempfile.NamedTemporaryFile('w+', suffix='.wrl', encoding='utf-8', delete=False) as handle:
     writer.save_bmesh(
         handle.write,

@@ -21,6 +21,7 @@ A maintained Blender Extension for exporting mesh objects to **VRML 2.0 (`.wrl`)
 - Applies object transforms, axis conversion, and a configurable global scale.
 - Converts Blender shade smoothing to VRML `creaseAngle` values in radians.
 - Preserves Smooth by Angle thresholds such as 30°, 45°, and 90° per reusable geometry.
+- Preserves manually marked sharp edges alongside `creaseAngle` smoothing without changing the visible mesh shape.
 - Reuses linked mesh geometry with VRML `DEF`/`USE` nodes to reduce file size.
 - Preserves separate object locations, rotations, and positive non-uniform scales while reusing geometry.
 - Preserves outward-facing triangle winding when mirrored or negative-scale transforms are baked.
@@ -92,10 +93,17 @@ field automatically:
 | **Shade Flat** | Omits `creaseAngle`, using VRML's flat default of `0`. |
 | **Smooth by Angle** | Converts the modifier angle from degrees to radians. For example, 30° becomes `0.523599`, 45° becomes `0.785398`, and 90° becomes `1.570796`. |
 | **Shade Smooth** | Writes `creaseAngle 3.141593` to smooth essentially every adjoining face. |
+| **Mark Sharp** | Keeps explicitly marked boundaries sharp by disconnecting only the affected exported coordinate references. |
 
 The crease angle is stored inside reusable geometry. Objects with identical
 coordinates but different smoothing angles therefore remain separate instead
 of incorrectly sharing one `DEF`/`USE` geometry definition.
+
+To preserve a specific sharp boundary, enter **Edit Mode**, select the desired
+edges, and choose **Edge > Mark Sharp**. The exporter keeps `creaseAngle` for
+the rest of the mesh and duplicates coordinate references only where the marked
+edge would otherwise be smoothed. Edges already kept sharp by the selected
+crease angle do not need to be duplicated.
 
 ### Export options
 
@@ -125,7 +133,7 @@ of incorrectly sharing one `DEF`/`USE` geometry definition.
 - Geometry is triangulated during export.
 - Mirrored (negative-scale) and sheared object transforms are baked into coordinates rather than instanced because VRML97 `Transform` scale values must be positive. Reflected geometry has its triangle winding corrected for one-sided VRML viewers.
 - Linked objects whose evaluated geometry differs because of modifiers, colors, or UV data are not combined.
-- A single VRML `creaseAngle` cannot represent arbitrary combinations of manually marked sharp edges; exact sharp-edge export is planned separately.
+- Custom split normals and specialized normal-editing modifier results are not written as explicit VRML normal arrays; ordinary shade smoothing, Smooth by Angle, and Mark Sharp boundaries are supported.
 - Blender shader node graphs are not converted to VRML materials. VRML2 Material Studio's stored VRML values are supported directly.
 - The exporter uses the first usable image texture found in an object's node-based materials; it does not reproduce complex multi-texture shading.
 - Color alpha values are ignored because the current writer outputs RGB values.

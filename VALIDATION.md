@@ -1,6 +1,6 @@
 # Validation notes
 
-The source archive includes a Blender-free smoke test for package imports and the VRML writer's point-color, corner-color, single- and multiple-material color, VRML2 Material Studio fields, UV, texture-path, index-output, linked-group separation, unused-DEF cleanup, DEF/USE geometry reuse, shade-smoothing angle conversion, smoothing-aware geometry separation, mirrored-transform winding correction, safe geometry/UV rounding, UV deduplication, compact output, and WRZ compression branches.
+The source archive includes a Blender-free smoke test for package imports and the VRML writer's point-color, corner-color, single- and multiple-material color, VRML2 Material Studio fields, UV, texture-path, index-output, linked-group separation, unused-DEF cleanup, DEF/USE geometry reuse, shade-smoothing angle conversion, manually marked sharp-edge selection, smoothing-aware geometry separation, mirrored-transform winding correction, safe geometry/UV rounding, UV deduplication, compact output, and WRZ compression branches.
 
 Run it from the project root:
 
@@ -14,6 +14,12 @@ Run the Material Studio integration check inside Blender with:
 
 ```bash
 blender --background --factory-startup --python tests/blender_material_integration_test.py
+```
+
+Run the manually marked sharp-edge integration check with:
+
+```bash
+blender --background --factory-startup --python tests/blender_sharp_edge_integration_test.py
 ```
 
 For a Blender-side release check, run:
