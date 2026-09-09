@@ -411,6 +411,45 @@ def _crease_angle_for_mesh(obj, bm, use_mesh_modifiers):
     return 0.0
 
 
+def _sharp_edges_requiring_split(bm, crease_angle):
+    """Return marked sharp edges that VRML's crease angle would otherwise smooth."""
+    if crease_angle <= 0.0:
+        return []
+
+    result = []
+    for edge in bm.edges:
+        if getattr(edge, "smooth", True):
+            continue
+
+        linked_faces = getattr(edge, "link_faces", ())
+        if len(linked_faces) < 2:
+            # Boundary edges have no adjacent face to smooth across.
+            continue
+        if len(linked_faces) != 2:
+            # Non-manifold adjacency cannot be represented reliably by one
+            # crease angle, so preserve the explicit sharp boundary.
+            result.append(edge)
+            continue
+
+        try:
+            face_angle = float(edge.calc_face_angle())
+        except (AttributeError, TypeError, ValueError):
+            result.append(edge)
+            continue
+
+        if not math.isfinite(face_angle) or face_angle < crease_angle - 1.0e-7:
+            result.append(edge)
+    return result
+
+
+def _split_sharp_edges_for_crease_angle(bm, crease_angle):
+    """Disconnect only explicit sharp boundaries not already handled by VRML."""
+    sharp_edges = _sharp_edges_requiring_split(bm, crease_angle)
+    if sharp_edges:
+        bmesh.ops.split_edges(bm, edges=sharp_edges)
+    return len(sharp_edges)
+
+
 def _write_face_indices(fw, faces, index_for_loop):
     for face in faces:
         for loop in face.loops:
@@ -969,6 +1008,7 @@ def save_object(
 
         bmesh.ops.triangulate(bm, faces=list(bm.faces))
         crease_angle = _crease_angle_for_mesh(obj, bm, use_mesh_modifiers)
+        _split_sharp_edges_for_crease_angle(bm, crease_angle)
         object_matrix = obj_eval.matrix_world if obj_eval is not None else obj.matrix_world
         export_matrix = global_matrix @ object_matrix
         transform = (
