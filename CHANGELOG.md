@@ -2,7 +2,7 @@
 
 All notable changes to this maintained fork are recorded here.
 
-## Unreleased
+## 0.6.0 - 2026-09-09
 
 - Preserved Blender edges marked Sharp when exporting meshes with a positive VRML `creaseAngle`.
 - Limited sharp-edge coordinate splitting to boundaries that `creaseAngle` would otherwise smooth, avoiding redundant file-size growth on angle-generated sharp edges.
