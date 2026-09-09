@@ -8,7 +8,7 @@ A maintained Blender Extension for exporting mesh objects to **VRML 2.0 (`.wrl`)
 - **Current maintainer:** thebreat
 - **Source code:** [GitHub repository](https://github.com/thebreat/blender-vrml2-exporter)
 - **Bug reports and feature requests:** [GitHub Issues](https://github.com/thebreat/blender-vrml2-exporter/issues)
-- **License:** GNU General Public License, version 2 or any later version (`GPL-2.0-or-later`)
+- **License:** GNU General Public License, version 3 or any later version (`GPL-3.0-or-later`)
 - **Extension ID:** `io_scene_vrml2_export`
 - **Current package version:** `0.6.0`
 - **Minimum Blender version:** `4.2.0`
@@ -148,7 +148,7 @@ __init__.py            Blender operator, user interface, registration, and menu 
 export_vrml2.py        Mesh conversion and VRML writer
 README.md              User, installation, support, and development documentation
 CHANGELOG.md           Version history
-LICENSE                GNU GPL version 2 license text
+LICENSE                GNU GPL version 3 license text
 ```
 
 ## Build and validate a release
@@ -183,4 +183,4 @@ A useful bug report should include:
 
 ## License
 
-This extension is free software under `GPL-2.0-or-later`. See [LICENSE](LICENSE). Modified distributions must preserve the applicable copyright and license notices and provide source code under compatible GPL terms.
+This extension is free software under `GPL-3.0-or-later`. See [LICENSE](LICENSE). Modified distributions must preserve the applicable copyright and license notices and provide source code under compatible GPL terms.

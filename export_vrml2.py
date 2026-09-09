@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Original VRML2 exporter by Campbell Barton.
 # Current extension packaging and compatibility maintenance are provided by
