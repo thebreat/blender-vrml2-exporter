@@ -1,6 +1,6 @@
 # Validation notes
 
-The source archive includes a Blender-free smoke test for package imports and the VRML writer's point-color, corner-color, single- and multiple-material color, VRML2 Material Studio fields, UV, texture-path, texture path-mode handling, textured-Shape lighting, index-output, linked-group separation, unused-DEF cleanup, DEF/USE geometry reuse, shade-smoothing angle conversion, manually marked sharp-edge selection, smoothing-aware geometry separation, mirrored-transform winding correction, safe geometry/UV rounding, UV deduplication, compact output, and WRZ compression branches.
+The source archive includes a Blender-free smoke test for package imports and the VRML writer's point-color, corner-color, single- and multiple-material color, VRML2 Material Studio fields, UV, texture-path, texture path-mode handling, textured-Shape lighting, one- and two-sided face output, index-output, linked-group separation, unused-DEF cleanup, DEF/USE geometry reuse, shade-smoothing angle conversion, manually marked sharp-edge selection, smoothing-aware geometry separation, mirrored-transform winding correction, safe geometry/UV rounding, UV deduplication, compact output, and WRZ compression branches.
 
 Run it from the project root:
 

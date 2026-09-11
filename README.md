@@ -114,6 +114,7 @@ crease angle do not need to be duplicated.
 | --- | --- |
 | **Selection Only** | Exports selected mesh objects instead of every mesh in the scene. |
 | **Apply Modifiers** | Exports Blender's evaluated mesh with modifiers applied. |
+| **Two-Sided Faces** | Writes `solid FALSE` so VRML viewers render both sides of thin or open faces. Disabled by default; it does not add thickness or repair mesh topology. |
 | **Geometry Reuse: Linked Objects Only** | Default. Reuses geometry only for objects that intentionally share Blender mesh data, such as duplicates created with `Alt+D`. |
 | **Geometry Reuse: All Identical Geometry** | Also reuses independent objects, including unchanged `Shift+D` copies, when their complete exported geometry is identical. |
 | **Geometry Reuse: Off** | Writes every object's geometry separately using baked coordinates. |

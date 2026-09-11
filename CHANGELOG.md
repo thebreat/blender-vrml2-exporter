@@ -2,6 +2,10 @@
 
 All notable changes to this maintained fork are recorded here.
 
+## Unreleased
+
+- Added an optional Two-Sided Faces export setting that writes `solid FALSE` for thin or open meshes. The existing one-sided output remains the default.
+
 ## 0.6.1 - 2026-09-10
 
 - Fixed exported texture URLs so they follow the selected path mode instead of also recording the absolute location of the texture on the exporting machine.

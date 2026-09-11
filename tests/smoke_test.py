@@ -104,6 +104,7 @@ spec.loader.exec_module(package)
 assert package.ExportVRML.bl_idname == 'export_scene.vrml2'
 assert package.ExportVRML.filename_ext == '.wrl'
 assert package.ExportVRML.__annotations__['geometry_reuse']['default'] == 'LINKED'
+assert package.ExportVRML.__annotations__['two_sided_faces']['default'] is False
 assert package.ExportVRML.__annotations__['decimal_places']['default'] == 6
 assert package.ExportVRML.__annotations__['deduplicate_uvs']['default'] is True
 assert package.ExportVRML.__annotations__['include_object_comments']['default'] is True
@@ -374,6 +375,27 @@ assert 'colorPerVertex TRUE' in content
 assert 'colorIndex [ 0 1 2 -1 ]' in content
 assert 'coordIndex [ 0 1 2 -1 ]' in content
 assert 'color [ 1 0 0 0 1 0 0 0 1 ]' in content
+assert 'solid FALSE' not in content
+
+# Two-sided export is opt-in and writes the VRML flag on the geometry node.
+two_sided_buffer = io.StringIO()
+writer.save_bmesh(
+    two_sided_buffer.write,
+    bm,
+    '/tmp',
+    False,
+    'MATERIAL',
+    [],
+    None,
+    None,
+    False,
+    None,
+    'AUTO',
+    set(),
+    two_sided_faces=True,
+)
+two_sided_content = two_sided_buffer.getvalue()
+assert two_sided_content.count('solid FALSE') == 1
 
 # Blender smoothing angles are exported as VRML radians. Crease angle is part
 # of reusable geometry, so otherwise-identical meshes with different shading

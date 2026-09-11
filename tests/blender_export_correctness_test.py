@@ -1,6 +1,6 @@
-"""Blender-side integration checks for texture path modes and Shape lighting.
+"""Blender-side integration checks for texture paths, lighting, and face sides.
 
-These two behaviours depend on Blender itself rather than on the writer alone:
+These checks depend on Blender itself rather than on the writer alone:
 
 * Path modes are resolved by ``bpy_extras.io_utils.path_reference``. The
   Blender-free smoke test can only exercise a stand-in for that function, so it
@@ -367,6 +367,45 @@ def check_textured_shape_is_lit(extension, root):
         assert "diffuseColor 0.1 0.2 0.3" in content, content
 
 
+def check_two_sided_faces(extension, root):
+    """The global option reaches every geometry node and remains opt-in."""
+    with scenario(root, "two-sided", "two-sided textures") as (
+        texture_directory, export_directory
+    ):
+        export_path = export_directory / "two-sided.wrl"
+        absolute = str(texture_directory / TEXTURE_NAME)
+        materials = (
+            {"name": "Studio A", "studio": STUDIO_ONE},
+            {"name": "Studio B", "studio": STUDIO_TWO},
+        )
+        with texture_image(texture_directory, absolute) as image:
+            with textured_object(image, materials=materials):
+                default_content = export(
+                    extension,
+                    export_path,
+                    use_color=True,
+                    color_type="MATERIAL",
+                    use_uv=True,
+                    path_mode="STRIP",
+                )
+                two_sided_content = export(
+                    extension,
+                    export_path,
+                    use_color=True,
+                    color_type="MATERIAL",
+                    use_uv=True,
+                    path_mode="STRIP",
+                    two_sided_faces=True,
+                )
+
+        assert "solid FALSE" not in default_content, default_content
+        geometry_count = two_sided_content.count("IndexedFaceSet {")
+        assert geometry_count == 2, two_sided_content
+        assert two_sided_content.count("solid FALSE") == geometry_count, (
+            two_sided_content
+        )
+
+
 def main():
     extension = load_extension()
     clear_scene()
@@ -375,11 +414,12 @@ def main():
         try:
             check_path_modes(extension, root)
             check_textured_shape_is_lit(extension, root)
+            check_two_sided_faces(extension, root)
         finally:
             # Leave no fixture behind for a following run, whether or not an
             # assertion above failed.
             clear_scene()
-    print("Blender texture path mode and Shape lighting integration test passed.")
+    print("Blender export correctness integration test passed.")
 
 
 if __name__ == "__main__":
