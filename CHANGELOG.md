@@ -2,6 +2,13 @@
 
 All notable changes to this maintained fork are recorded here.
 
+## Unreleased
+
+- Fixed exported texture URLs so they follow the selected path mode instead of also recording the absolute location of the texture on the exporting machine.
+- Fixed `Match` path mode so it keeps a Blender-relative texture path relative instead of always writing an absolute one.
+- Kept textured shapes lit by writing a `Material` node in every exported `Appearance`, because VRML97 renders a shape unlit when its appearance has no material.
+- Added regression coverage for every path mode and for the textured-shape lighting cases, including checks that run inside Blender against its own path resolution.
+
 ## 0.6.0 - 2026-09-09
 
 - Preserved Blender edges marked Sharp when exporting meshes with a positive VRML `creaseAngle`.

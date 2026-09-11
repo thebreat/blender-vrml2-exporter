@@ -864,7 +864,11 @@ def save_bmesh(
             else {"diffuse_color": tuple(material_colors[0])}
         )
         _write_material_node(fw, settings, f"{indent}\t\t", decimal_places)
-    elif not use_uv:
+    else:
+        # A Shape whose Appearance has no material field is unlit, and an RGB
+        # texture is then drawn flat at full brightness instead of being shaded
+        # (VRML97 4.14.2 and table 4.5). Writing an empty Material keeps every
+        # exported Shape lit using the VRML97 material defaults.
         fw(f"{indent}\t\tmaterial Material {{\n")
         fw(f"{indent}\t\t}}\n")
 
@@ -873,8 +877,13 @@ def save_bmesh(
         filepath_full = os.path.normpath(
             bpy.path.abspath(filepath, library=uv_image.library)
         )
+        # path_reference() decides Match from the Blender-relative "//" prefix
+        # and resolves the path itself, so it needs the stored filepath rather
+        # than an already-absolute one. Passing an absolute path here made Match
+        # behave like Absolute for every image. The normalized absolute path is
+        # still used below for the file name.
         filepath_ref = bpy_extras.io_utils.path_reference(
-            filepath_full,
+            filepath,
             base_src,
             base_dst,
             path_mode,
@@ -884,10 +893,13 @@ def save_bmesh(
         )
         filepath_base = os.path.basename(filepath_full)
 
-        image_urls = [filepath_ref, filepath_base]
-        if path_mode != "RELATIVE":
-            image_urls.append(filepath_full)
-        image_urls = _unique_strings(image_urls)
+        # path_reference() has already applied the selected path mode, so its
+        # result is the reference the user asked for. Appending the absolute
+        # source path on top of it defeated Strip Path and Copy, and wrote
+        # machine-local directory names into the exported file. The bare file
+        # name stays as an additional VRML url alternative for viewers that
+        # resolve textures beside the exported .wrl.
+        image_urls = _unique_strings([filepath_ref, filepath_base])
 
         fw(f"{indent}\t\ttexture ImageTexture {{\n")
         fw(

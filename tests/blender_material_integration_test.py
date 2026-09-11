@@ -4,11 +4,17 @@ from __future__ import annotations
 
 import importlib.util
 import sys
-import tempfile
-from pathlib import Path
 
-import bpy
-from mathutils import Matrix
+# Importing the exporter would otherwise leave __pycache__ directories in the
+# checkout. Blender enables bytecode writing regardless of PYTHONDONTWRITEBYTECODE,
+# so it has to be turned off here, before the extension is imported.
+sys.dont_write_bytecode = True
+
+import tempfile  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+import bpy  # noqa: E402
+from mathutils import Matrix  # noqa: E402
 
 
 SOURCE = Path(__file__).resolve().parents[1]
