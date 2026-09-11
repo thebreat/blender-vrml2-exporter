@@ -13,6 +13,7 @@ import math
 import os
 import stat
 import tempfile
+from contextlib import contextmanager
 
 import bmesh
 import bpy
@@ -607,6 +608,180 @@ def _indent_after_first_line(text, indent):
     return lines[0] + "".join(indent + line for line in lines[1:])
 
 
+def _indent_block(text, indent):
+    """Indent every line in a generated VRML block."""
+    return "".join(indent + line for line in text.splitlines(keepends=True))
+
+
+def _animation_frames(frame_start, frame_end, frame_step):
+    """Return sampled scene frames, always including both range endpoints."""
+    if frame_step < 1:
+        raise ValueError("Animation frame step must be at least 1")
+    if frame_end <= frame_start:
+        return (frame_start,)
+    frames = list(range(frame_start, frame_end + 1, frame_step))
+    if frames[-1] != frame_end:
+        frames.append(frame_end)
+    return tuple(frames)
+
+
+def _matrix_translation(matrix):
+    """Return a matrix translation without depending on a concrete matrix type."""
+    return tuple(float(matrix[row][3]) for row in range(3))
+
+
+@contextmanager
+def _preserve_scene_frame(scene):
+    """Restore Blender's current frame after temporary animation sampling."""
+    original_frame = scene.frame_current
+    original_subframe = getattr(scene, "frame_subframe", 0.0)
+    try:
+        yield
+    finally:
+        scene.frame_set(original_frame, subframe=original_subframe)
+
+
+@contextmanager
+def _temporary_scene_frame(scene, frame):
+    """Evaluate an export at one frame and restore the user's timeline position."""
+    if frame is None:
+        yield
+        return
+    with _preserve_scene_frame(scene):
+        scene.frame_set(frame)
+        yield
+
+
+def _sample_location_animations(
+    scene,
+    mesh_objects,
+    global_matrix,
+    frame_start,
+    frame_end,
+    frame_step,
+):
+    """Sample changing exported world locations and return VRML-ready deltas."""
+    frames = _animation_frames(frame_start, frame_end, frame_step)
+    if len(frames) < 2:
+        return frames, []
+
+    samples = [[] for _obj in mesh_objects]
+    with _preserve_scene_frame(scene):
+        for frame in frames:
+            scene.frame_set(frame)
+            for index, obj in enumerate(mesh_objects):
+                export_matrix = global_matrix @ obj.matrix_world
+                samples[index].append(_matrix_translation(export_matrix))
+
+    duration = float(frame_end - frame_start)
+    fractions = tuple((frame - frame_start) / duration for frame in frames)
+    animations = []
+    for obj, positions in zip(mesh_objects, samples):
+        start = positions[0]
+        deltas = tuple(
+            tuple(position[axis] - start[axis] for axis in range(3))
+            for position in positions
+        )
+        if not any(
+            abs(component) > 1.0e-9
+            for delta in deltas[1:]
+            for component in delta
+        ):
+            continue
+        index = len(animations) + 1
+        animations.append(
+            {
+                "object": obj,
+                "transform_name": f"AnimatedTransform_{index}",
+                "interpolator_name": f"LocationInterpolator_{index}",
+                "touch_name": f"AnimationTouch_{index}",
+                "fractions": fractions,
+                "deltas": deltas,
+            }
+        )
+    return frames, animations
+
+
+def _animation_decimal_places(deltas, requested, maximum=9):
+    """Retain enough precision that sampled location changes do not disappear."""
+    for decimals in range(requested, maximum + 1):
+        formatted = [
+            tuple(_format_float(component, decimals) for component in delta)
+            for delta in deltas
+        ]
+        collapsed_change = any(
+            any(
+                abs(current[axis] - previous[axis]) > 1.0e-9
+                for axis in range(3)
+            )
+            and formatted[index] == formatted[index - 1]
+            for index, (previous, current) in enumerate(
+                zip(deltas, deltas[1:]),
+                start=1,
+            )
+        )
+        if not collapsed_change:
+            return decimals
+    return maximum
+
+
+def _write_location_animations(
+    fw,
+    animations,
+    cycle_interval,
+    loop,
+    decimal_places,
+):
+    """Write one shared clock and a PositionInterpolator for each moving object."""
+    if not animations:
+        return
+
+    timing_decimals = max(decimal_places, 6)
+    fw("\n# Location animation\n")
+    fw("DEF AnimationClock TimeSensor {\n")
+    fw(
+        "\tcycleInterval %s\n"
+        % _format_float(cycle_interval, timing_decimals)
+    )
+    fw(f"\tloop {'TRUE' if loop else 'FALSE'}\n")
+    fw("}\n")
+
+    for animation in animations:
+        value_decimals = _animation_decimal_places(
+            animation["deltas"],
+            decimal_places,
+        )
+        fw(f"\nDEF {animation['interpolator_name']} PositionInterpolator {{\n")
+        fw("\tkey [ ")
+        for fraction in animation["fractions"]:
+            fw(f"{_format_float(fraction, timing_decimals)} ")
+        fw("]\n")
+        fw("\tkeyValue [ ")
+        for delta in animation["deltas"]:
+            fw(
+                "%s %s %s "
+                % tuple(
+                    _format_float(component, value_decimals)
+                    for component in delta
+                )
+            )
+        fw("]\n")
+        fw("}\n")
+        fw(
+            f"ROUTE AnimationClock.fraction_changed TO "
+            f"{animation['interpolator_name']}.set_fraction\n"
+        )
+        fw(
+            f"ROUTE {animation['interpolator_name']}.value_changed TO "
+            f"{animation['transform_name']}.set_translation\n"
+        )
+        if not loop:
+            fw(
+                f"ROUTE {animation['touch_name']}.touchTime TO "
+                "AnimationClock.set_startTime\n"
+            )
+
+
 def _decompose_vrml_transform(matrix):
     """Return a VRML-compatible transform, or None for shear/reflection cases."""
     translation, rotation, scale = matrix.decompose()
@@ -1194,6 +1369,9 @@ def save(
     compact_output=False,
     create_wrz=False,
     two_sided_faces=False,
+    export_animation=False,
+    animation_loop=True,
+    animation_frame_step=1,
 ):
     """Export mesh objects from the current context to a VRML 2.0 file."""
     if global_matrix is None:
@@ -1214,6 +1392,35 @@ def save(
         raise ValueError(f"Unknown geometry reuse mode: {geometry_reuse!r}")
     if not 0 <= decimal_places <= 9:
         raise ValueError("Decimal places must be between 0 and 9")
+    if animation_frame_step < 1:
+        raise ValueError("Animation frame step must be at least 1")
+
+    animation_frame = None
+    location_animations = []
+    animation_cycle_interval = 0.0
+    if export_animation:
+        animation_frame = scene.frame_start
+        _frames, location_animations = _sample_location_animations(
+            scene,
+            mesh_objects,
+            global_matrix,
+            scene.frame_start,
+            scene.frame_end,
+            animation_frame_step,
+        )
+        fps_base = float(scene.render.fps_base)
+        if fps_base <= 0.0:
+            raise ValueError("Scene frame rate must be greater than zero")
+        frames_per_second = float(scene.render.fps) / fps_base
+        if frames_per_second <= 0.0:
+            raise ValueError("Scene frame rate must be greater than zero")
+        animation_cycle_interval = (
+            float(scene.frame_end - scene.frame_start) / frames_per_second
+        )
+    animations_by_object = {
+        id(animation["object"]): animation
+        for animation in location_animations
+    }
 
     geometry_cache = {} if geometry_reuse != "OFF" else None
     mesh_data_counts = {}
@@ -1224,7 +1431,9 @@ def save(
     reused_geometry_count = 0
     base_dst = os.path.dirname(os.path.abspath(filepath)) or os.getcwd()
 
-    with open(filepath, "w", encoding="utf-8", newline="\n") as file:
+    with _temporary_scene_frame(scene, animation_frame), open(
+        filepath, "w", encoding="utf-8", newline="\n"
+    ) as file:
         fw = file.write
         fw("#VRML V2.0 utf8\n")
         fw("# Exported from Blender with the VRML2 Exporter extension\n")
@@ -1243,8 +1452,11 @@ def save(
                     geometry_group = None
                 else:
                     geometry_group = ("LINKED", mesh_key)
+            animation = animations_by_object.get(id(obj))
+            object_buffer = io.StringIO() if animation is not None else None
+            object_writer = object_buffer.write if object_buffer is not None else fw
             reused_geometry_count += save_object(
-                fw,
+                object_writer,
                 global_matrix,
                 obj,
                 base_dst,
@@ -1260,6 +1472,22 @@ def save(
                 geometry_group,
                 two_sided_faces=two_sided_faces,
             )
+            if animation is not None:
+                fw(f"DEF {animation['transform_name']} Transform {{\n")
+                fw("\tchildren [\n")
+                fw(_indent_block(object_buffer.getvalue(), "\t\t"))
+                if not animation_loop:
+                    fw(f"\t\tDEF {animation['touch_name']} TouchSensor {{ }}\n")
+                fw("\t]\n")
+                fw("}\n")
+
+        _write_location_animations(
+            fw,
+            location_animations,
+            animation_cycle_interval,
+            animation_loop,
+            decimal_places,
+        )
 
     if geometry_cache is not None:
         _remove_unused_geometry_defs(filepath, geometry_cache)
@@ -1273,6 +1501,8 @@ def save(
     message = f"Exported {len(mesh_objects)} mesh object(s) to VRML2"
     if reused_geometry_count:
         message += f"; reused {reused_geometry_count} geometries with DEF/USE"
+    if location_animations:
+        message += f"; animated {len(location_animations)} object location(s)"
     if wrz_path is not None:
         message += f"; created {os.path.basename(wrz_path)}"
     operator.report({"INFO"}, message)

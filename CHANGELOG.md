@@ -2,9 +2,13 @@
 
 All notable changes to this maintained fork are recorded here.
 
-## Unreleased
+## 0.7.0-alpha.1 - 2026-09-10
 
 - Added an optional Two-Sided Faces export setting that writes `solid FALSE` on every exported geometry. The existing one-sided output remains the default.
+- Added the first animation alpha with optional mesh-object location animation over Blender's scene frame range.
+- Added a shared VRML `TimeSensor`, per-object `PositionInterpolator` nodes, continuous looping or click-to-play one-shot playback, and configurable frame sampling.
+- Preserved the user's current Blender timeline frame after animation export.
+- Kept animation disabled by default so existing static exports remain unchanged.
 
 ## 0.6.1 - 2026-09-10
 

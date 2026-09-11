@@ -105,6 +105,9 @@ assert package.ExportVRML.bl_idname == 'export_scene.vrml2'
 assert package.ExportVRML.filename_ext == '.wrl'
 assert package.ExportVRML.__annotations__['geometry_reuse']['default'] == 'LINKED'
 assert package.ExportVRML.__annotations__['two_sided_faces']['default'] is False
+assert package.ExportVRML.__annotations__['export_animation']['default'] is False
+assert package.ExportVRML.__annotations__['animation_loop']['default'] is True
+assert package.ExportVRML.__annotations__['animation_frame_step']['default'] == 1
 assert package.ExportVRML.__annotations__['decimal_places']['default'] == 6
 assert package.ExportVRML.__annotations__['deduplicate_uvs']['default'] is True
 assert package.ExportVRML.__annotations__['include_object_comments']['default'] is True
@@ -123,6 +126,48 @@ assert writer._vrml_quote(r'C:\textures\a "quoted" file.png') == '"C:/textures/a
 assert writer._format_float(10.0, 0) == '10'
 assert writer._format_float(-0.0001, 3) == '0'
 assert writer._format_float(1.23456, 3) == '1.235'
+assert writer._animation_frames(1, 25, 12) == (1, 13, 25)
+assert writer._animation_frames(1, 24, 10) == (1, 11, 21, 24)
+
+animation_buffer = io.StringIO()
+writer._write_location_animations(
+    animation_buffer.write,
+    [
+        {
+            'transform_name': 'AnimatedTransform_1',
+            'interpolator_name': 'LocationInterpolator_1',
+            'touch_name': 'AnimationTouch_1',
+            'fractions': (0.0, 0.5, 1.0),
+            'deltas': ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (2.0, 0.0, 0.0)),
+        }
+    ],
+    1.0,
+    False,
+    3,
+)
+animation_content = animation_buffer.getvalue()
+assert 'DEF AnimationClock TimeSensor {' in animation_content
+assert 'cycleInterval 1' in animation_content
+assert '\tloop FALSE' in animation_content
+assert '\tkey [ 0 0.5 1 ]' in animation_content
+assert '\tkeyValue [ 0 0 0 1 0 0 2 0 0 ]' in animation_content
+assert (
+    'ROUTE AnimationClock.fraction_changed TO LocationInterpolator_1.set_fraction'
+    in animation_content
+)
+assert (
+    'ROUTE LocationInterpolator_1.value_changed TO '
+    'AnimatedTransform_1.set_translation'
+    in animation_content
+)
+assert (
+    'ROUTE AnimationTouch_1.touchTime TO AnimationClock.set_startTime'
+    in animation_content
+)
+assert writer._animation_decimal_places(
+    ((0.0, 0.0, 0.0), (0.4, 0.0, 0.0), (0.8, 0.0, 0.0)),
+    0,
+) == 1
 
 
 class FakeMaterial(dict):

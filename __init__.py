@@ -65,6 +65,32 @@ class ExportVRML(bpy.types.Operator, ExportHelper):
         default=False,
     )
 
+    export_animation: BoolProperty(
+        name="Export Animation",
+        description=(
+            "Export mesh-object location changes over the scene frame range "
+            "using VRML animation nodes"
+        ),
+        default=False,
+    )
+
+    animation_loop: BoolProperty(
+        name="Loop Animation",
+        description=(
+            "Repeat continuously; when disabled, clicking an animated object "
+            "plays the animation once"
+        ),
+        default=True,
+    )
+
+    animation_frame_step: IntProperty(
+        name="Sample Every",
+        description="Sample animated locations every this many Blender frames",
+        min=1,
+        max=120,
+        default=1,
+    )
+
     geometry_reuse: EnumProperty(
         name="Geometry Reuse",
         description="Choose which mesh objects may share VRML DEF/USE geometry",
@@ -214,6 +240,19 @@ class ExportVRML(bpy.types.Operator, ExportHelper):
         row = layout.row()
         row.active = self.use_color
         row.prop(self, "color_type")
+
+        layout.separator()
+        layout.label(text="Animation (Alpha)")
+        layout.prop(self, "export_animation")
+
+        animation_row = layout.row(align=True)
+        animation_row.active = self.export_animation
+        animation_row.prop(self, "animation_loop")
+        animation_row.prop(self, "animation_frame_step")
+
+        frame_range_row = layout.row()
+        frame_range_row.active = self.export_animation
+        frame_range_row.label(text="Uses the scene start and end frames")
 
         layout.separator()
         layout.prop(self, "axis_forward")

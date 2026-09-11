@@ -10,7 +10,7 @@ A maintained Blender Extension for exporting mesh objects to **VRML 2.0 (`.wrl`)
 - **Bug reports and feature requests:** [GitHub Issues](https://github.com/thebreat/blender-vrml2-exporter/issues)
 - **License:** GNU General Public License, version 3 or any later version (`GPL-3.0-or-later`)
 - **Extension ID:** `io_scene_vrml2_export`
-- **Current package version:** `0.6.1`
+- **Current package version:** `0.7.0-alpha.1`
 - **Minimum Blender version:** `4.2.0`
 
 ## Features
@@ -19,6 +19,7 @@ A maintained Blender Extension for exporting mesh objects to **VRML 2.0 (`.wrl`)
 - Exports every mesh in the scene or selected objects only.
 - Applies evaluated modifiers when **Apply Modifiers** is enabled.
 - Applies object transforms, axis conversion, and a configurable global scale.
+- Exports sampled mesh-object location animation through VRML `TimeSensor`, `PositionInterpolator`, and `ROUTE` nodes when the alpha animation option is enabled.
 - Converts Blender shade smoothing to VRML `creaseAngle` values in radians.
 - Preserves Smooth by Angle thresholds such as 30°, 45°, and 90° per reusable geometry.
 - Preserves manually marked sharp edges alongside `creaseAngle` smoothing without changing the visible mesh shape.
@@ -49,13 +50,13 @@ A maintained Blender Extension for exporting mesh objects to **VRML 2.0 (`.wrl`)
 
 ## Install the packaged extension
 
-Use the included distributable archive named `vrml2_exporter-0.6.1.zip`. **Do not extract it first.**
+Use the included distributable archive named `vrml2_exporter-0.7.0-alpha.1.zip`. **Do not extract it first.**
 
 1. Open Blender 4.2 or newer.
 2. Open **Edit > Preferences**.
 3. Open **Get Extensions** or **Extensions**, depending on the Blender release.
 4. Open the menu in the upper-right corner and choose **Install from Disk**.
-5. Select `vrml2_exporter-0.6.1.zip`.
+5. Select `vrml2_exporter-0.7.0-alpha.1.zip`.
 6. Confirm the installation and enable **VRML2 Exporter** if Blender does not enable it automatically.
 7. Close Preferences.
 
@@ -118,6 +119,9 @@ crease angle do not need to be duplicated.
 | **Geometry Reuse: Linked Objects Only** | Default. Reuses geometry only for objects that intentionally share Blender mesh data, such as duplicates created with `Alt+D`. |
 | **Geometry Reuse: All Identical Geometry** | Also reuses independent objects, including unchanged `Shift+D` copies, when their complete exported geometry is identical. |
 | **Geometry Reuse: Off** | Writes every object's geometry separately using baked coordinates. |
+| **Export Animation** | Alpha feature. Samples changing mesh-object locations across the scene frame range and writes VRML location animation. Disabled by default. |
+| **Loop Animation** | Repeats exported location animation continuously and begins when the WRL loads. When disabled, clicking an animated object plays the animation once. |
+| **Sample Every** | Samples animated locations every specified number of Blender frames. A value of 1 most closely follows Blender; larger values reduce file size. The final scene frame is always included. |
 | **Texture and UVs** | Exports the active UV map and a referenced image texture when one can be found. |
 | **Deduplicate UV Coordinates** | Default. Writes each rounded UV coordinate once and reuses its index. Disable this only when comparing against older exporter output. |
 | **Colors / Materials** | Enables color-attribute or material-setting export. |
@@ -133,7 +137,8 @@ crease angle do not need to be duplicated.
 
 ## Known limitations
 
-- The extension exports mesh geometry only. Cameras, lights, armatures, animation, constraints, and scene hierarchy are not exported.
+- The extension exports mesh objects only. Cameras, lights, armatures, and scene hierarchy are not exported.
+- Animation support in `0.7.0-alpha.1` is limited to evaluated mesh-object world-location changes. Rotation, scale, armatures, shape keys, deforming modifiers, material animation, and visibility animation are not yet exported.
 - Geometry is triangulated during export.
 - Mirrored (negative-scale) and sheared object transforms are baked into coordinates rather than instanced because VRML97 `Transform` scale values must be positive. Reflected geometry has its triangle winding corrected for one-sided VRML viewers.
 - Linked objects whose evaluated geometry differs because of modifiers, colors, or UV data are not combined.
