@@ -537,6 +537,32 @@ assert reused_content.count('geometry DEF Geometry_1 IndexedFaceSet') == 1
 assert reused_content.count('geometry USE Geometry_1') == 1
 assert reused_content.count('point [ ') == 1
 
+# Two-sided geometry is written once in a DEF and retained by its USE reference.
+two_sided_reuse_cache = {}
+two_sided_reuse_buffer = io.StringIO()
+for _ in range(2):
+    writer.save_bmesh(
+        two_sided_reuse_buffer.write,
+        bm,
+        '/tmp',
+        False,
+        'MATERIAL',
+        [],
+        None,
+        None,
+        False,
+        None,
+        'AUTO',
+        set(),
+        two_sided_reuse_cache,
+        ('LINKED', 1002),
+        two_sided_faces=True,
+    )
+two_sided_reuse_content = two_sided_reuse_buffer.getvalue()
+assert two_sided_reuse_content.count('geometry DEF Geometry_1 IndexedFaceSet') == 1
+assert two_sided_reuse_content.count('geometry USE Geometry_1') == 1
+assert two_sided_reuse_content.count('solid FALSE') == 1
+
 # The same geometry in a different linked-mesh group remains independent.
 with tempfile.NamedTemporaryFile('w+', suffix='.wrl', encoding='utf-8', delete=False) as handle:
     writer.save_bmesh(
@@ -699,7 +725,8 @@ operator = Operator()
 original_save_object = writer.save_object
 
 
-def capture_reuse(*args):
+def capture_reuse(*args, **kwargs):
+    assert kwargs.get('two_sided_faces') is False
     capture_reuse.calls.append((args[2].name, args[-2], args[-1]))
     return False
 

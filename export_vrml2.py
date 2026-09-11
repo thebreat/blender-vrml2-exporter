@@ -991,11 +991,11 @@ def save_object(
     use_uv,
     path_mode,
     copy_set,
-    two_sided_faces,
     decimal_places,
     deduplicate_uvs,
     geometry_cache,
     geometry_group,
+    two_sided_faces=False,
 ):
     """Evaluate and export a single mesh object."""
     if obj.type != "MESH":
@@ -1254,11 +1254,11 @@ def save(
                 use_uv,
                 path_mode,
                 copy_set,
-                two_sided_faces,
                 decimal_places,
                 deduplicate_uvs,
                 object_geometry_cache,
                 geometry_group,
+                two_sided_faces=two_sided_faces,
             )
 
     if geometry_cache is not None:
