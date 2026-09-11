@@ -469,12 +469,15 @@ def _write_indexed_face_set(
     decimal_places,
     deduplicate_uvs,
     crease_angle,
+    two_sided_faces=False,
 ):
     """Write the reusable geometry portion of a VRML Shape node."""
     coordinate_decimals = _coordinate_decimal_places(bm, decimal_places)
     color_decimals = min(decimal_places, 4)
 
     fw("IndexedFaceSet {\n")
+    if two_sided_faces:
+        fw("\tsolid FALSE\n")
     if crease_angle > 0.0:
         angle_decimals = max(decimal_places, 6)
         fw(f"\tcreaseAngle {_format_float(crease_angle, angle_decimals)}\n")
@@ -841,6 +844,7 @@ def save_bmesh(
     deduplicate_uvs=True,
     crease_angle=0.0,
     material_settings=None,
+    two_sided_faces=False,
 ):
     """Write one triangulated BMesh as a VRML Shape node."""
     base_src = os.path.dirname(bpy.data.filepath) or os.getcwd()
@@ -922,6 +926,7 @@ def save_bmesh(
         decimal_places,
         deduplicate_uvs,
         crease_angle,
+        two_sided_faces,
     )
     geometry_text = geometry_buffer.getvalue()
     geometry_indent = f"{indent}\t"
@@ -990,6 +995,7 @@ def save_object(
     deduplicate_uvs,
     geometry_cache,
     geometry_group,
+    two_sided_faces=False,
 ):
     """Evaluate and export a single mesh object."""
     if obj.type != "MESH":
@@ -1132,6 +1138,7 @@ def save_object(
                         deduplicate_uvs,
                         crease_angle,
                         [material_settings[material_index]],
+                        two_sided_faces,
                     )
                 finally:
                     subset.free()
@@ -1156,6 +1163,7 @@ def save_object(
                 deduplicate_uvs,
                 crease_angle,
                 material_settings,
+                two_sided_faces,
             )
         if transform is not None:
             fw("\t]\n")
@@ -1185,6 +1193,7 @@ def save(
     include_object_comments=True,
     compact_output=False,
     create_wrz=False,
+    two_sided_faces=False,
 ):
     """Export mesh objects from the current context to a VRML 2.0 file."""
     if global_matrix is None:
@@ -1249,6 +1258,7 @@ def save(
                 deduplicate_uvs,
                 object_geometry_cache,
                 geometry_group,
+                two_sided_faces=two_sided_faces,
             )
 
     if geometry_cache is not None:

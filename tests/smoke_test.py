@@ -104,6 +104,7 @@ spec.loader.exec_module(package)
 assert package.ExportVRML.bl_idname == 'export_scene.vrml2'
 assert package.ExportVRML.filename_ext == '.wrl'
 assert package.ExportVRML.__annotations__['geometry_reuse']['default'] == 'LINKED'
+assert package.ExportVRML.__annotations__['two_sided_faces']['default'] is False
 assert package.ExportVRML.__annotations__['decimal_places']['default'] == 6
 assert package.ExportVRML.__annotations__['deduplicate_uvs']['default'] is True
 assert package.ExportVRML.__annotations__['include_object_comments']['default'] is True
@@ -374,6 +375,27 @@ assert 'colorPerVertex TRUE' in content
 assert 'colorIndex [ 0 1 2 -1 ]' in content
 assert 'coordIndex [ 0 1 2 -1 ]' in content
 assert 'color [ 1 0 0 0 1 0 0 0 1 ]' in content
+assert 'solid FALSE' not in content
+
+# Two-sided export is opt-in and writes the VRML flag on the geometry node.
+two_sided_buffer = io.StringIO()
+writer.save_bmesh(
+    two_sided_buffer.write,
+    bm,
+    '/tmp',
+    False,
+    'MATERIAL',
+    [],
+    None,
+    None,
+    False,
+    None,
+    'AUTO',
+    set(),
+    two_sided_faces=True,
+)
+two_sided_content = two_sided_buffer.getvalue()
+assert two_sided_content.count('solid FALSE') == 1
 
 # Blender smoothing angles are exported as VRML radians. Crease angle is part
 # of reusable geometry, so otherwise-identical meshes with different shading
@@ -514,6 +536,32 @@ assert second_reused is True
 assert reused_content.count('geometry DEF Geometry_1 IndexedFaceSet') == 1
 assert reused_content.count('geometry USE Geometry_1') == 1
 assert reused_content.count('point [ ') == 1
+
+# Two-sided geometry is written once in a DEF and retained by its USE reference.
+two_sided_reuse_cache = {}
+two_sided_reuse_buffer = io.StringIO()
+for _ in range(2):
+    writer.save_bmesh(
+        two_sided_reuse_buffer.write,
+        bm,
+        '/tmp',
+        False,
+        'MATERIAL',
+        [],
+        None,
+        None,
+        False,
+        None,
+        'AUTO',
+        set(),
+        two_sided_reuse_cache,
+        ('LINKED', 1002),
+        two_sided_faces=True,
+    )
+two_sided_reuse_content = two_sided_reuse_buffer.getvalue()
+assert two_sided_reuse_content.count('geometry DEF Geometry_1 IndexedFaceSet') == 1
+assert two_sided_reuse_content.count('geometry USE Geometry_1') == 1
+assert two_sided_reuse_content.count('solid FALSE') == 1
 
 # The same geometry in a different linked-mesh group remains independent.
 with tempfile.NamedTemporaryFile('w+', suffix='.wrl', encoding='utf-8', delete=False) as handle:
@@ -677,7 +725,8 @@ operator = Operator()
 original_save_object = writer.save_object
 
 
-def capture_reuse(*args):
+def capture_reuse(*args, **kwargs):
+    assert kwargs.get('two_sided_faces') is False
     capture_reuse.calls.append((args[2].name, args[-2], args[-1]))
     return False
 

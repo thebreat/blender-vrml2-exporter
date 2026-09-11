@@ -56,6 +56,15 @@ class ExportVRML(bpy.types.Operator, ExportHelper):
         default=True,
     )
 
+    two_sided_faces: BoolProperty(
+        name="Two-Sided Faces",
+        description=(
+            "Show both sides of exported faces; useful for thin or open meshes, "
+            "but does not add thickness or repair mesh topology"
+        ),
+        default=False,
+    )
+
     geometry_reuse: EnumProperty(
         name="Geometry Reuse",
         description="Choose which mesh objects may share VRML DEF/USE geometry",
@@ -191,6 +200,7 @@ class ExportVRML(bpy.types.Operator, ExportHelper):
 
         layout.prop(self, "use_selection")
         layout.prop(self, "use_mesh_modifiers")
+        layout.prop(self, "two_sided_faces")
         layout.prop(self, "geometry_reuse")
 
         row = layout.row(align=True)
