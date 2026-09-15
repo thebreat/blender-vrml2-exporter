@@ -2,7 +2,7 @@
 
 All notable changes to this maintained fork are recorded here.
 
-## Unreleased
+## 0.6.2 - 2026-09-14
 
 - Added an optional Two-Sided Faces export setting that writes `solid FALSE` on every exported geometry. The existing one-sided output remains the default.
 
