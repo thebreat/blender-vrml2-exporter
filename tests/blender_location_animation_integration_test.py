@@ -1,4 +1,4 @@
-"""Blender-side integration check for the first location-animation alpha."""
+"""Blender-side integration check for sampled transform animation."""
 
 from __future__ import annotations
 
@@ -73,14 +73,28 @@ def main():
     )
     obj = bpy.data.objects.new("Moving Triangle", mesh)
     scene.collection.objects.link(obj)
+    rotating_obj = bpy.data.objects.new("Rotating Triangle", mesh)
+    scene.collection.objects.link(rotating_obj)
+    rotating_obj.location = (-2.0, 0.0, 0.0)
     static_obj = bpy.data.objects.new("Static Triangle", mesh)
     scene.collection.objects.link(static_obj)
-    static_obj.location = (-2.0, 0.0, 0.0)
+    static_obj.location = (0.0, -2.0, 0.0)
 
     obj.location = (1.0, 2.0, 3.0)
+    obj.rotation_mode = "XYZ"
+    obj.rotation_euler = (0.0, 0.0, 0.0)
     obj.keyframe_insert(data_path="location", frame=1)
+    obj.keyframe_insert(data_path="rotation_euler", frame=1)
     obj.location = (3.0, 2.0, 3.0)
+    obj.rotation_euler = (0.0, 0.0, 1.5707963267948966)
     obj.keyframe_insert(data_path="location", frame=25)
+    obj.keyframe_insert(data_path="rotation_euler", frame=25)
+
+    rotating_obj.rotation_mode = "XYZ"
+    rotating_obj.rotation_euler = (0.0, 0.0, 0.0)
+    rotating_obj.keyframe_insert(data_path="rotation_euler", frame=1)
+    rotating_obj.rotation_euler = (0.0, 0.0, 1.5707963267948966)
+    rotating_obj.keyframe_insert(data_path="rotation_euler", frame=25)
     scene.frame_set(7)
 
     with tempfile.TemporaryDirectory(prefix="vrml2-location-animation-") as temp:
@@ -95,15 +109,22 @@ def main():
             animation_frame_step=12,
         )
         assert scene.frame_current == 7
-        assert animated.count("Shape {") == 2
-        assert animated.count("DEF AnimatedTransform_") == 1
+        assert animated.count("Shape {") == 3
+        assert animated.count("DEF AnimatedTransform_") == 2
         assert "DEF AnimatedTransform_1 Transform {" in animated
+        assert "DEF AnimatedTransform_2 Transform {" in animated
+        assert "center 1 2 3" in animated
+        assert "center -2 0 0" in animated
         assert "DEF AnimationClock TimeSensor {" in animated
         assert "cycleInterval 1" in animated
         assert "loop FALSE" in animated
         assert "DEF AnimationTouch_1 TouchSensor { }" in animated
         assert "key [ 0 0.5 1 ]" in animated
         assert "keyValue [ 0 0 0 1 0 0 2 0 0 ]" in animated
+        assert "DEF RotationInterpolator_1 OrientationInterpolator {" in animated
+        assert "DEF RotationInterpolator_2 OrientationInterpolator {" in animated
+        assert "LocationInterpolator_2" not in animated
+        assert "keyValue [ 0 0 1 0 0 0 1 0.785398 0 0 1 1.570796 ]" in animated
         assert (
             "ROUTE AnimationClock.fraction_changed TO "
             "LocationInterpolator_1.set_fraction"
@@ -111,6 +132,18 @@ def main():
         assert (
             "ROUTE LocationInterpolator_1.value_changed TO "
             "AnimatedTransform_1.set_translation"
+        ) in animated
+        assert (
+            "ROUTE AnimationClock.fraction_changed TO "
+            "RotationInterpolator_1.set_fraction"
+        ) in animated
+        assert (
+            "ROUTE RotationInterpolator_1.value_changed TO "
+            "AnimatedTransform_1.set_rotation"
+        ) in animated
+        assert (
+            "ROUTE RotationInterpolator_2.value_changed TO "
+            "AnimatedTransform_2.set_rotation"
         ) in animated
         assert (
             "ROUTE AnimationTouch_1.touchTime TO AnimationClock.set_startTime"
@@ -128,16 +161,17 @@ def main():
         assert "TouchSensor" not in looping
         assert ".touchTime" not in looping
         assert looping.count("geometry DEF Geometry_1 IndexedFaceSet") == 1
-        assert looping.count("geometry USE Geometry_1") == 1
+        assert looping.count("geometry USE Geometry_1") == 2
 
         static = export(extension, static_path, export_animation=False)
         assert "TimeSensor" not in static
         assert "PositionInterpolator" not in static
+        assert "OrientationInterpolator" not in static
         assert "AnimatedTransform" not in static
 
     clear_scene()
     bpy.data.meshes.remove(mesh)
-    print("Blender location animation integration test passed.")
+    print("Blender transform animation integration test passed.")
 
 
 if __name__ == "__main__":

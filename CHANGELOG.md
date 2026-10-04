@@ -2,6 +2,13 @@
 
 All notable changes to this maintained fork are recorded here.
 
+## 0.7.0-alpha.2 - 2026-10-04
+
+- Added sampled mesh-object rotation animation through VRML `OrientationInterpolator` nodes.
+- Combined location and rotation animation around each object's starting world-space pivot, preventing animated objects from orbiting the scene origin.
+- Added adaptive rotation precision and Blender-side coverage for simultaneous location and rotation animation.
+- Included the 0.6.3 Blender Extensions packaging exclusions in the animation branch.
+
 ## 0.7.0-alpha.1 - 2026-09-10
 
 - Added the first animation alpha with optional mesh-object location animation over Blender's scene frame range.

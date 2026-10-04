@@ -652,7 +652,20 @@ def _temporary_scene_frame(scene, frame):
         yield
 
 
-def _sample_location_animations(
+def _quaternion_dot(first, second):
+    """Return the dot product of two quaternion-like four-value sequences."""
+    return sum(float(a) * float(b) for a, b in zip(first, second))
+
+
+def _quaternion_axis_angle(rotation):
+    """Return a stable VRML axis-angle tuple for a Blender quaternion."""
+    axis, angle = rotation.to_axis_angle()
+    if abs(angle) < 1.0e-10:
+        return (0.0, 0.0, 1.0, 0.0)
+    return tuple(float(component) for component in axis) + (float(angle),)
+
+
+def _sample_transform_animations(
     scene,
     mesh_objects,
     global_matrix,
@@ -660,50 +673,82 @@ def _sample_location_animations(
     frame_end,
     frame_step,
 ):
-    """Sample changing exported world locations and return VRML-ready deltas."""
+    """Sample changing exported world locations and rotations."""
     frames = _animation_frames(frame_start, frame_end, frame_step)
     if len(frames) < 2:
         return frames, []
 
-    samples = [[] for _obj in mesh_objects]
+    position_samples = [[] for _obj in mesh_objects]
+    rotation_samples = [[] for _obj in mesh_objects]
     with _preserve_scene_frame(scene):
         for frame in frames:
             scene.frame_set(frame)
             for index, obj in enumerate(mesh_objects):
                 export_matrix = global_matrix @ obj.matrix_world
-                samples[index].append(_matrix_translation(export_matrix))
+                position_samples[index].append(_matrix_translation(export_matrix))
+                rotation = export_matrix.decompose()[1]
+                rotation.normalize()
+                rotation_samples[index].append(rotation)
 
     duration = float(frame_end - frame_start)
     fractions = tuple((frame - frame_start) / duration for frame in frames)
     animations = []
-    for obj, positions in zip(mesh_objects, samples):
-        start = positions[0]
-        deltas = tuple(
-            tuple(position[axis] - start[axis] for axis in range(3))
+    for obj, positions, rotations in zip(
+        mesh_objects,
+        position_samples,
+        rotation_samples,
+    ):
+        start_position = positions[0]
+        translation_deltas = tuple(
+            tuple(position[axis] - start_position[axis] for axis in range(3))
             for position in positions
         )
-        if not any(
+        has_translation = any(
             abs(component) > 1.0e-9
-            for delta in deltas[1:]
+            for delta in translation_deltas[1:]
             for component in delta
-        ):
+        )
+
+        start_rotation = rotations[0]
+        has_rotation = any(
+            1.0 - abs(_quaternion_dot(start_rotation, rotation)) > 1.0e-10
+            for rotation in rotations[1:]
+        )
+        if not has_translation and not has_rotation:
             continue
+
+        rotation_deltas = []
+        previous_delta = None
+        for rotation in rotations:
+            delta = rotation @ start_rotation.conjugated()
+            delta.normalize()
+            if previous_delta is not None:
+                delta.make_compatible(previous_delta)
+            rotation_deltas.append(_quaternion_axis_angle(delta))
+            previous_delta = delta
+
         index = len(animations) + 1
         animations.append(
             {
                 "object": obj,
                 "transform_name": f"AnimatedTransform_{index}",
-                "interpolator_name": f"LocationInterpolator_{index}",
+                "location_interpolator_name": f"LocationInterpolator_{index}",
+                "rotation_interpolator_name": f"RotationInterpolator_{index}",
                 "touch_name": f"AnimationTouch_{index}",
                 "fractions": fractions,
-                "deltas": deltas,
+                "center": start_position,
+                "translation_deltas": translation_deltas,
+                "rotation_deltas": tuple(rotation_deltas),
+                "has_translation": has_translation,
+                "has_rotation": has_rotation,
             }
         )
     return frames, animations
 
 
 def _animation_decimal_places(deltas, requested, maximum=9):
-    """Retain enough precision that sampled location changes do not disappear."""
+    """Retain enough precision that sampled numeric changes do not disappear."""
+    component_count = len(deltas[0]) if deltas else 0
     for decimals in range(requested, maximum + 1):
         formatted = [
             tuple(_format_float(component, decimals) for component in delta)
@@ -712,7 +757,7 @@ def _animation_decimal_places(deltas, requested, maximum=9):
         collapsed_change = any(
             any(
                 abs(current[axis] - previous[axis]) > 1.0e-9
-                for axis in range(3)
+                for axis in range(component_count)
             )
             and formatted[index] == formatted[index - 1]
             for index, (previous, current) in enumerate(
@@ -725,19 +770,71 @@ def _animation_decimal_places(deltas, requested, maximum=9):
     return maximum
 
 
-def _write_location_animations(
+def _axis_angle_quaternion(rotation):
+    """Convert an axis-angle tuple to a normalized quaternion tuple."""
+    x, y, z, angle = (float(value) for value in rotation)
+    magnitude = math.sqrt(x * x + y * y + z * z)
+    if magnitude <= 1.0e-12 or abs(angle) <= 1.0e-12:
+        return (1.0, 0.0, 0.0, 0.0)
+    half_angle = angle * 0.5
+    sine = math.sin(half_angle) / magnitude
+    return (
+        math.cos(half_angle),
+        x * sine,
+        y * sine,
+        z * sine,
+    )
+
+
+def _orientations_differ(first, second, tolerance=1.0e-10):
+    """Return whether two axis-angle values represent different orientations."""
+    first_quaternion = _axis_angle_quaternion(first)
+    second_quaternion = _axis_angle_quaternion(second)
+    return (
+        1.0 - abs(_quaternion_dot(first_quaternion, second_quaternion))
+        > tolerance
+    )
+
+
+def _rotation_animation_decimal_places(rotations, requested, maximum=9):
+    """Retain enough precision that sampled orientation changes remain visible."""
+    for decimals in range(requested, maximum + 1):
+        rounded = [
+            tuple(
+                float(_format_float(component, decimals))
+                for component in rotation
+            )
+            for rotation in rotations
+        ]
+        collapsed_change = any(
+            _orientations_differ(previous, current)
+            and not _orientations_differ(
+                rounded[index - 1],
+                rounded[index],
+            )
+            for index, (previous, current) in enumerate(
+                zip(rotations, rotations[1:]),
+                start=1,
+            )
+        )
+        if not collapsed_change:
+            return decimals
+    return maximum
+
+
+def _write_transform_animations(
     fw,
     animations,
     cycle_interval,
     loop,
     decimal_places,
 ):
-    """Write one shared clock and a PositionInterpolator for each moving object."""
+    """Write one clock plus the needed transform interpolators and routes."""
     if not animations:
         return
 
     timing_decimals = max(decimal_places, 6)
-    fw("\n# Location animation\n")
+    fw("\n# Transform animation\n")
     fw("DEF AnimationClock TimeSensor {\n")
     fw(
         "\tcycleInterval %s\n"
@@ -747,34 +844,72 @@ def _write_location_animations(
     fw("}\n")
 
     for animation in animations:
-        value_decimals = _animation_decimal_places(
-            animation["deltas"],
-            decimal_places,
-        )
-        fw(f"\nDEF {animation['interpolator_name']} PositionInterpolator {{\n")
-        fw("\tkey [ ")
-        for fraction in animation["fractions"]:
-            fw(f"{_format_float(fraction, timing_decimals)} ")
-        fw("]\n")
-        fw("\tkeyValue [ ")
-        for delta in animation["deltas"]:
-            fw(
-                "%s %s %s "
-                % tuple(
-                    _format_float(component, value_decimals)
-                    for component in delta
-                )
+        if animation["has_translation"]:
+            value_decimals = _animation_decimal_places(
+                animation["translation_deltas"],
+                decimal_places,
             )
-        fw("]\n")
-        fw("}\n")
-        fw(
-            f"ROUTE AnimationClock.fraction_changed TO "
-            f"{animation['interpolator_name']}.set_fraction\n"
-        )
-        fw(
-            f"ROUTE {animation['interpolator_name']}.value_changed TO "
-            f"{animation['transform_name']}.set_translation\n"
-        )
+            fw(
+                f"\nDEF {animation['location_interpolator_name']} "
+                "PositionInterpolator {\n"
+            )
+            fw("\tkey [ ")
+            for fraction in animation["fractions"]:
+                fw(f"{_format_float(fraction, timing_decimals)} ")
+            fw("]\n")
+            fw("\tkeyValue [ ")
+            for delta in animation["translation_deltas"]:
+                fw(
+                    "%s %s %s "
+                    % tuple(
+                        _format_float(component, value_decimals)
+                        for component in delta
+                    )
+                )
+            fw("]\n")
+            fw("}\n")
+            fw(
+                f"ROUTE AnimationClock.fraction_changed TO "
+                f"{animation['location_interpolator_name']}.set_fraction\n"
+            )
+            fw(
+                f"ROUTE {animation['location_interpolator_name']}.value_changed TO "
+                f"{animation['transform_name']}.set_translation\n"
+            )
+
+        if animation["has_rotation"]:
+            rotation_decimals = _rotation_animation_decimal_places(
+                animation["rotation_deltas"],
+                decimal_places,
+            )
+            fw(
+                f"\nDEF {animation['rotation_interpolator_name']} "
+                "OrientationInterpolator {\n"
+            )
+            fw("\tkey [ ")
+            for fraction in animation["fractions"]:
+                fw(f"{_format_float(fraction, timing_decimals)} ")
+            fw("]\n")
+            fw("\tkeyValue [ ")
+            for rotation in animation["rotation_deltas"]:
+                fw(
+                    "%s %s %s %s "
+                    % tuple(
+                        _format_float(component, rotation_decimals)
+                        for component in rotation
+                    )
+                )
+            fw("]\n")
+            fw("}\n")
+            fw(
+                f"ROUTE AnimationClock.fraction_changed TO "
+                f"{animation['rotation_interpolator_name']}.set_fraction\n"
+            )
+            fw(
+                f"ROUTE {animation['rotation_interpolator_name']}.value_changed TO "
+                f"{animation['transform_name']}.set_rotation\n"
+            )
+
         if not loop:
             fw(
                 f"ROUTE {animation['touch_name']}.touchTime TO "
@@ -1396,11 +1531,11 @@ def save(
         raise ValueError("Animation frame step must be at least 1")
 
     animation_frame = None
-    location_animations = []
+    transform_animations = []
     animation_cycle_interval = 0.0
     if export_animation:
         animation_frame = scene.frame_start
-        _frames, location_animations = _sample_location_animations(
+        _frames, transform_animations = _sample_transform_animations(
             scene,
             mesh_objects,
             global_matrix,
@@ -1419,7 +1554,7 @@ def save(
         )
     animations_by_object = {
         id(animation["object"]): animation
-        for animation in location_animations
+        for animation in transform_animations
     }
 
     geometry_cache = {} if geometry_reuse != "OFF" else None
@@ -1474,6 +1609,14 @@ def save(
             )
             if animation is not None:
                 fw(f"DEF {animation['transform_name']} Transform {{\n")
+                if animation["has_rotation"]:
+                    fw(
+                        "\tcenter %s %s %s\n"
+                        % tuple(
+                            _format_float(component, decimal_places)
+                            for component in animation["center"]
+                        )
+                    )
                 fw("\tchildren [\n")
                 fw(_indent_block(object_buffer.getvalue(), "\t\t"))
                 if not animation_loop:
@@ -1481,9 +1624,9 @@ def save(
                 fw("\t]\n")
                 fw("}\n")
 
-        _write_location_animations(
+        _write_transform_animations(
             fw,
-            location_animations,
+            transform_animations,
             animation_cycle_interval,
             animation_loop,
             decimal_places,
@@ -1501,8 +1644,17 @@ def save(
     message = f"Exported {len(mesh_objects)} mesh object(s) to VRML2"
     if reused_geometry_count:
         message += f"; reused {reused_geometry_count} geometries with DEF/USE"
-    if location_animations:
-        message += f"; animated {len(location_animations)} object location(s)"
+    if transform_animations:
+        location_count = sum(
+            animation["has_translation"] for animation in transform_animations
+        )
+        rotation_count = sum(
+            animation["has_rotation"] for animation in transform_animations
+        )
+        message += (
+            f"; animated {len(transform_animations)} object transform(s)"
+            f" ({location_count} location, {rotation_count} rotation)"
+        )
     if wrz_path is not None:
         message += f"; created {os.path.basename(wrz_path)}"
     operator.report({"INFO"}, message)

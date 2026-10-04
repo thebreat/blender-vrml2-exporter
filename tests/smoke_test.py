@@ -130,15 +130,27 @@ assert writer._animation_frames(1, 25, 12) == (1, 13, 25)
 assert writer._animation_frames(1, 24, 10) == (1, 11, 21, 24)
 
 animation_buffer = io.StringIO()
-writer._write_location_animations(
+writer._write_transform_animations(
     animation_buffer.write,
     [
         {
             'transform_name': 'AnimatedTransform_1',
-            'interpolator_name': 'LocationInterpolator_1',
+            'location_interpolator_name': 'LocationInterpolator_1',
+            'rotation_interpolator_name': 'RotationInterpolator_1',
             'touch_name': 'AnimationTouch_1',
             'fractions': (0.0, 0.5, 1.0),
-            'deltas': ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (2.0, 0.0, 0.0)),
+            'translation_deltas': (
+                (0.0, 0.0, 0.0),
+                (1.0, 0.0, 0.0),
+                (2.0, 0.0, 0.0),
+            ),
+            'rotation_deltas': (
+                (0.0, 0.0, 1.0, 0.0),
+                (0.0, 0.0, 1.0, math.pi / 4.0),
+                (0.0, 0.0, 1.0, math.pi / 2.0),
+            ),
+            'has_translation': True,
+            'has_rotation': True,
         }
     ],
     1.0,
@@ -160,14 +172,36 @@ assert (
     'AnimatedTransform_1.set_translation'
     in animation_content
 )
+assert 'DEF RotationInterpolator_1 OrientationInterpolator {' in animation_content
+assert 'keyValue [ 0 0 1 0 0 0 1 0.785 0 0 1 1.571 ]' in animation_content
+assert (
+    'ROUTE AnimationClock.fraction_changed TO RotationInterpolator_1.set_fraction'
+    in animation_content
+)
+assert (
+    'ROUTE RotationInterpolator_1.value_changed TO '
+    'AnimatedTransform_1.set_rotation'
+    in animation_content
+)
 assert (
     'ROUTE AnimationTouch_1.touchTime TO AnimationClock.set_startTime'
     in animation_content
 )
+assert animation_content.count(
+    'ROUTE AnimationTouch_1.touchTime TO AnimationClock.set_startTime'
+) == 1
 assert writer._animation_decimal_places(
     ((0.0, 0.0, 0.0), (0.4, 0.0, 0.0), (0.8, 0.0, 0.0)),
     0,
 ) == 1
+assert writer._rotation_animation_decimal_places(
+    (
+        (0.0, 0.0, 1.0, 0.0),
+        (1.0, 0.0, 0.0, 0.004),
+        (1.0, 0.0, 0.0, 0.008),
+    ),
+    0,
+) == 3
 
 
 class FakeMaterial(dict):
