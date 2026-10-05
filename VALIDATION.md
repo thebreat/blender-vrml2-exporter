@@ -34,8 +34,8 @@ Run the transform-animation alpha check inside Blender with:
 blender --background --factory-startup --python tests/blender_location_animation_integration_test.py
 ```
 
-This check covers object location, rotation, and scale as well as shape-key and
-Armature modifier coordinate animation.
+This check covers object location, rotation, and scale; shape-key and Armature
+modifier coordinate animation; and diffuse material color animation.
 
 The export-correctness check needs Blender because it exercises the real
 `bpy_extras.io_utils.path_reference` resolution for every path mode, against an

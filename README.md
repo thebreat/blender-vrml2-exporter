@@ -10,7 +10,7 @@ A maintained Blender Extension for exporting mesh objects to **VRML 2.0 (`.wrl`)
 - **Bug reports and feature requests:** [GitHub Issues](https://github.com/thebreat/blender-vrml2-exporter/issues)
 - **License:** GNU General Public License, version 3 or any later version (`GPL-3.0-or-later`)
 - **Extension ID:** `io_scene_vrml2_export`
-- **Current package version:** `0.7.0-alpha.7`
+- **Current package version:** `0.7.0-alpha.8`
 - **Minimum Blender version:** `4.2.0`
 
 ## Features
@@ -19,7 +19,7 @@ A maintained Blender Extension for exporting mesh objects to **VRML 2.0 (`.wrl`)
 - Exports every mesh in the scene or selected objects only.
 - Applies evaluated modifiers when **Apply Modifiers** is enabled.
 - Applies object transforms, axis conversion, and a configurable global scale.
-- Exports sampled mesh-object location, rotation, positive scale, and compatible shape-key or armature deformation through VRML `TimeSensor`, `PositionInterpolator`, `OrientationInterpolator`, `CoordinateInterpolator`, and `ROUTE` nodes when the alpha animation option is enabled.
+- Exports sampled mesh-object location, rotation, positive scale, compatible shape-key or armature deformation, and single-material diffuse color through VRML animation nodes when the alpha animation option is enabled.
 - Converts Blender shade smoothing to VRML `creaseAngle` values in radians.
 - Preserves Smooth by Angle thresholds such as 30°, 45°, and 90° per reusable geometry.
 - Preserves manually marked sharp edges alongside `creaseAngle` smoothing without changing the visible mesh shape.
@@ -50,13 +50,13 @@ A maintained Blender Extension for exporting mesh objects to **VRML 2.0 (`.wrl`)
 
 ## Install the packaged extension
 
-Use the included distributable archive named `io_scene_vrml2_export-0.7.0-alpha.7.zip`. **Do not extract it first.**
+Use the included distributable archive named `io_scene_vrml2_export-0.7.0-alpha.8.zip`. **Do not extract it first.**
 
 1. Open Blender 4.2 or newer.
 2. Open **Edit > Preferences**.
 3. Open **Get Extensions** or **Extensions**, depending on the Blender release.
 4. Open the menu in the upper-right corner and choose **Install from Disk**.
-5. Select `io_scene_vrml2_export-0.7.0-alpha.7.zip`.
+5. Select `io_scene_vrml2_export-0.7.0-alpha.8.zip`.
 6. Confirm the installation and enable **VRML2 Exporter** if Blender does not enable it automatically.
 7. Close Preferences.
 
@@ -119,7 +119,7 @@ crease angle do not need to be duplicated.
 | **Geometry Reuse: Linked Objects Only** | Default. Reuses geometry only for objects that intentionally share Blender mesh data, such as duplicates created with `Alt+D`. |
 | **Geometry Reuse: All Identical Geometry** | Also reuses independent objects, including unchanged `Shift+D` copies, when their complete exported geometry is identical. |
 | **Geometry Reuse: Off** | Writes every object's geometry separately using baked coordinates. |
-| **Export Animation** | Alpha feature. Samples changing mesh-object locations, rotations, positive scales, and compatible shape-key or armature deformation across the scene frame range. Deformation export requires **Apply Modifiers**. Disabled by default. |
+| **Export Animation** | Alpha feature. Samples changing mesh-object locations, rotations, positive scales, compatible shape-key or armature deformation, and diffuse colors on single-material objects across the scene frame range. Deformation export requires **Apply Modifiers**. Disabled by default. |
 | **Loop Animation** | Disabled by default. The animation stays stopped until an animated object is clicked, then plays once. Enable this option to begin on load and repeat continuously. |
 | **Sample Every** | Samples animated transforms every specified number of Blender frames. A value of 1 most closely follows Blender; larger values reduce file size and export time. The final scene frame is always included. |
 | **Texture and UVs** | Exports the active UV map and a referenced image texture when one can be found. |
@@ -138,7 +138,7 @@ crease angle do not need to be duplicated.
 ## Known limitations
 
 - The extension exports mesh objects only. Cameras, lights, armature objects/bones, and scene hierarchy are not exported. Armatures can still drive mesh deformation that is baked into coordinate animation.
-- Animation support in `0.7.0-alpha.7` covers evaluated mesh-object world-location, world-rotation, positive scale, and shape-key or Armature modifier changes on stable-vertex-count meshes that export as one VRML Shape. Scale that reaches zero or becomes negative, multi-Shape material deformation, other topology-changing deforming modifiers, material animation, and visibility animation are not yet exported.
+- Animation support in `0.7.0-alpha.8` covers evaluated mesh-object world-location, world-rotation, positive scale, shape-key or Armature modifier changes on stable-vertex-count meshes, and diffuse color changes on objects that export as one VRML Shape with one material. Scale that reaches zero or becomes negative, multi-Shape deformation or material animation, other topology-changing deforming modifiers, other material fields, and visibility animation are not yet exported.
 - Geometry is triangulated during export.
 - Mirrored (negative-scale) and sheared object transforms are baked into coordinates rather than instanced because VRML97 `Transform` scale values must be positive. Reflected geometry has its triangle winding corrected for one-sided VRML viewers.
 - Linked objects whose evaluated geometry differs because of modifiers, colors, or UV data are not combined.

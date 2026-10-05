@@ -2,6 +2,13 @@
 
 All notable changes to this maintained fork are recorded here.
 
+## 0.7.0-alpha.8 - 2026-10-05
+
+- Added sampled diffuse material color animation through VRML `ColorInterpolator` nodes.
+- Animated Blender base colors and animated VRML2 Material Studio diffuse colors are supported on objects that export as one Shape with one material.
+- Reused the existing loop and click-to-play animation controls for material animation.
+- Added Blender integration coverage for a red-to-blue keyed material.
+
 ## 0.7.0-alpha.7 - 2026-10-05
 
 - Added sampled Armature modifier deformation through VRML `CoordinateInterpolator` nodes for meshes whose evaluated vertex count remains stable.

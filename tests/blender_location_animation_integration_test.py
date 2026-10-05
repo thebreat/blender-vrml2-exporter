@@ -145,6 +145,22 @@ def main():
     pose_bone.rotation_euler = (0.0, 0.0, math.pi / 2.0)
     pose_bone.keyframe_insert(data_path="rotation_euler", frame=25)
 
+    color_mesh = bpy.data.meshes.new("Diffuse Color Animation Mesh")
+    color_mesh.from_pydata(
+        [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+        [],
+        [(0, 1, 2)],
+    )
+    color_obj = bpy.data.objects.new("Color Changing Triangle", color_mesh)
+    scene.collection.objects.link(color_obj)
+    color_obj.location = (10.0, 0.0, 0.0)
+    color_material = bpy.data.materials.new("Animated Diffuse Material")
+    color_obj.data.materials.append(color_material)
+    color_material.diffuse_color = (1.0, 0.0, 0.0, 1.0)
+    color_material.keyframe_insert(data_path="diffuse_color", frame=1)
+    color_material.diffuse_color = (0.0, 0.0, 1.0, 1.0)
+    color_material.keyframe_insert(data_path="diffuse_color", frame=25)
+
     obj.location = (1.0, 2.0, 3.0)
     obj.rotation_mode = "XYZ"
     obj.rotation_euler = (0.0, 0.0, 0.5235987755982988)
@@ -177,15 +193,18 @@ def main():
             animation_loop=False,
             animation_frame_step=12,
             use_mesh_modifiers=True,
+            use_color=True,
+            color_type="MATERIAL",
         )
         assert scene.frame_current == 7
-        assert animated.count("Shape {") == 5
+        assert animated.count("Shape {") == 6
         animated_transform_count = animated.count("DEF AnimatedTransform_")
-        assert animated_transform_count == 4, animated_transform_count
+        assert animated_transform_count == 5, animated_transform_count
         assert "DEF AnimatedTransform_1 Transform {" in animated
         assert "DEF AnimatedTransform_2 Transform {" in animated
         assert "DEF AnimatedTransform_3 Transform {" in animated
         assert "DEF AnimatedTransform_4 Transform {" in animated
+        assert "DEF AnimatedTransform_5 Transform {" in animated
         assert "center 1 2 3" in animated
         assert "center -2 0 0" in animated
         assert "scaleOrientation 0 0 1 0.523599" in animated
@@ -239,6 +258,16 @@ def main():
             "ROUTE CoordinateInterpolator_4.value_changed TO "
             "AnimatedCoordinates_4.set_point"
         ) in animated
+        assert "material DEF AnimatedMaterial_5 Material {" in animated
+        assert "DEF ColorInterpolator_5 ColorInterpolator {" in animated
+        assert (
+            "ROUTE AnimationClock.fraction_changed TO "
+            "ColorInterpolator_5.set_fraction"
+        ) in animated
+        assert (
+            "ROUTE ColorInterpolator_5.value_changed TO "
+            "AnimatedMaterial_5.set_diffuseColor"
+        ) in animated
         assert (
             "ROUTE AnimationTouch_1.touchTime TO AnimationClock.set_startTime"
         ) in animated
@@ -251,6 +280,8 @@ def main():
             animation_frame_step=12,
             geometry_reuse="LINKED",
             use_mesh_modifiers=True,
+            use_color=True,
+            color_type="MATERIAL",
         )
         assert "loop TRUE" in looping
         assert "startTime -1" not in looping
@@ -265,6 +296,7 @@ def main():
         assert "OrientationInterpolator" not in static
         assert "ScaleInterpolator" not in static
         assert "CoordinateInterpolator" not in static
+        assert "ColorInterpolator" not in static
         assert "AnimatedTransform" not in static
 
     clear_scene()
@@ -272,6 +304,8 @@ def main():
     bpy.data.meshes.remove(shape_mesh)
     bpy.data.meshes.remove(armature_mesh)
     bpy.data.armatures.remove(armature_data)
+    bpy.data.meshes.remove(color_mesh)
+    bpy.data.materials.remove(color_material)
     print("Blender transform animation integration test passed.")
 
 

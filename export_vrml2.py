@@ -906,6 +906,63 @@ def _sample_coordinate_animations(
     return animations
 
 
+def _sample_diffuse_color_animations(
+    scene,
+    mesh_objects,
+    frames,
+    use_color,
+    color_type,
+):
+    """Sample diffuse colors for objects that export as one material Shape."""
+    if len(frames) < 2 or not use_color or color_type != "MATERIAL":
+        return {}
+
+    candidates = []
+    for obj in mesh_objects:
+        materials = [slot.material for slot in obj.material_slots]
+        if len(materials) == 1 and materials[0] is not None:
+            candidates.append((obj, materials[0]))
+    if not candidates:
+        return {}
+
+    samples = {id(obj): [] for obj, _material in candidates}
+    with _preserve_scene_frame(scene):
+        for frame in frames:
+            scene.frame_set(frame)
+            for obj, material in candidates:
+                samples[id(obj)].append(
+                    _material_export_settings(material)["diffuse_color"]
+                )
+
+    animations = {}
+    for obj, _material in candidates:
+        colors = tuple(samples[id(obj)])
+        baseline = colors[0]
+        if any(
+            abs(component - baseline[axis]) > 1.0e-9
+            for color in colors[1:]
+            for axis, component in enumerate(color)
+        ):
+            animations[id(obj)] = colors
+    return animations
+
+
+def _empty_object_animation(obj, fractions, frames):
+    """Create a neutral animation record for non-transform animation channels."""
+    return {
+        "object": obj,
+        "fractions": fractions,
+        "center": (0.0, 0.0, 0.0),
+        "translation_deltas": tuple((0.0, 0.0, 0.0) for _frame in frames),
+        "rotation_deltas": tuple((0.0, 0.0, 1.0, 0.0) for _frame in frames),
+        "scale_orientation": (0.0, 0.0, 1.0, 0.0),
+        "scale_ratios": tuple((1.0, 1.0, 1.0) for _frame in frames),
+        "has_translation": False,
+        "has_rotation": False,
+        "has_scale": False,
+    }
+
+
 def _animation_decimal_places(deltas, requested, maximum=9):
     """Retain enough precision that sampled numeric changes do not disappear."""
     component_count = len(deltas[0]) if deltas else 0
@@ -1181,6 +1238,39 @@ def _write_transform_animations(
                 f"{animation['coordinate_name']}.set_point\n"
             )
 
+        if animation.get("has_diffuse_color", False):
+            color_decimals = _animation_decimal_places(
+                animation["diffuse_color_values"],
+                decimal_places,
+            )
+            fw(
+                f"\nDEF {animation['color_interpolator_name']} "
+                "ColorInterpolator {\n"
+            )
+            fw("\tkey [ ")
+            for fraction in animation["fractions"]:
+                fw(f"{_format_float(fraction, timing_decimals)} ")
+            fw("]\n")
+            fw("\tkeyValue [ ")
+            for color in animation["diffuse_color_values"]:
+                fw(
+                    "%s %s %s "
+                    % tuple(
+                        _format_float(component, color_decimals)
+                        for component in color
+                    )
+                )
+            fw("]\n")
+            fw("}\n")
+            fw(
+                f"ROUTE AnimationClock.fraction_changed TO "
+                f"{animation['color_interpolator_name']}.set_fraction\n"
+            )
+            fw(
+                f"ROUTE {animation['color_interpolator_name']}.value_changed TO "
+                f"{animation['material_name']}.set_diffuseColor\n"
+            )
+
         if not loop:
             fw(
                 f"ROUTE {animation['touch_name']}.touchTime TO "
@@ -1377,10 +1467,17 @@ def _mesh_data_identity(obj):
     return as_pointer() if as_pointer is not None else id(mesh)
 
 
-def _write_material_node(fw, settings, indent, decimal_places):
+def _write_material_node(
+    fw,
+    settings,
+    indent,
+    decimal_places,
+    material_name=None,
+):
     """Write one VRML Material node from normalized export settings."""
     material_decimals = min(decimal_places, 4)
-    fw(f"{indent}material Material {{\n")
+    material_def = f"DEF {material_name} " if material_name else ""
+    fw(f"{indent}material {material_def}Material {{\n")
     for field, vrml_name in (
         ("diffuse_color", "diffuseColor"),
         ("emissive_color", "emissiveColor"),
@@ -1427,6 +1524,7 @@ def save_bmesh(
     material_settings=None,
     two_sided_faces=False,
     coordinate_name=None,
+    material_name=None,
 ):
     """Write one triangulated BMesh as a VRML Shape node."""
     base_src = os.path.dirname(bpy.data.filepath) or os.getcwd()
@@ -1449,7 +1547,13 @@ def save_bmesh(
             if material_settings
             else {"diffuse_color": tuple(material_colors[0])}
         )
-        _write_material_node(fw, settings, f"{indent}\t\t", decimal_places)
+        _write_material_node(
+            fw,
+            settings,
+            f"{indent}\t\t",
+            decimal_places,
+            material_name,
+        )
     else:
         # A Shape whose Appearance has no material field is unlit, and an RGB
         # texture is then drawn flat at full brightness instead of being shaded
@@ -1580,6 +1684,7 @@ def save_object(
     geometry_group,
     two_sided_faces=False,
     coordinate_name=None,
+    material_name=None,
 ):
     """Evaluate and export a single mesh object."""
     if obj.type != "MESH":
@@ -1750,6 +1855,7 @@ def save_object(
                 material_settings,
                 two_sided_faces,
                 coordinate_name,
+                material_name,
             )
         if transform is not None:
             fw("\t]\n")
@@ -1828,6 +1934,13 @@ def save(
             use_color,
             color_type,
         )
+        diffuse_color_animations = _sample_diffuse_color_animations(
+            scene,
+            mesh_objects,
+            sampled_frames,
+            use_color,
+            color_type,
+        )
         animations_by_id = {
             id(animation["object"]): animation
             for animation in transform_animations
@@ -1848,28 +1961,32 @@ def save(
                 continue
             animation = animations_by_id.get(object_id)
             if animation is None:
-                animation = {
-                    "object": obj,
-                    "fractions": fractions,
-                    "center": (0.0, 0.0, 0.0),
-                    "translation_deltas": tuple(
-                        (0.0, 0.0, 0.0) for _frame in sampled_frames
-                    ),
-                    "rotation_deltas": tuple(
-                        (0.0, 0.0, 1.0, 0.0) for _frame in sampled_frames
-                    ),
-                    "scale_orientation": (0.0, 0.0, 1.0, 0.0),
-                    "scale_ratios": tuple(
-                        (1.0, 1.0, 1.0) for _frame in sampled_frames
-                    ),
-                    "has_translation": False,
-                    "has_rotation": False,
-                    "has_scale": False,
-                }
+                animation = _empty_object_animation(
+                    obj,
+                    fractions,
+                    sampled_frames,
+                )
                 transform_animations.append(animation)
                 animations_by_id[object_id] = animation
             animation["has_coordinates"] = True
             animation["coordinate_values"] = coordinate_values
+
+        for obj in mesh_objects:
+            object_id = id(obj)
+            diffuse_color_values = diffuse_color_animations.get(object_id)
+            if diffuse_color_values is None:
+                continue
+            animation = animations_by_id.get(object_id)
+            if animation is None:
+                animation = _empty_object_animation(
+                    obj,
+                    fractions,
+                    sampled_frames,
+                )
+                transform_animations.append(animation)
+                animations_by_id[object_id] = animation
+            animation["has_diffuse_color"] = True
+            animation["diffuse_color_values"] = diffuse_color_values
 
         for index, animation in enumerate(transform_animations, start=1):
             animation["transform_name"] = f"AnimatedTransform_{index}"
@@ -1878,8 +1995,11 @@ def save(
             animation["scale_interpolator_name"] = f"ScaleInterpolator_{index}"
             animation["coordinate_name"] = f"AnimatedCoordinates_{index}"
             animation["coordinate_interpolator_name"] = f"CoordinateInterpolator_{index}"
+            animation["material_name"] = f"AnimatedMaterial_{index}"
+            animation["color_interpolator_name"] = f"ColorInterpolator_{index}"
             animation["touch_name"] = f"AnimationTouch_{index}"
             animation.setdefault("has_coordinates", False)
+            animation.setdefault("has_diffuse_color", False)
         fps_base = float(scene.render.fps_base)
         if fps_base <= 0.0:
             raise ValueError("Scene frame rate must be greater than zero")
@@ -1951,6 +2071,11 @@ def save(
                     if animation is not None and animation["has_coordinates"]
                     else None
                 ),
+                material_name=(
+                    animation["material_name"]
+                    if animation is not None and animation["has_diffuse_color"]
+                    else None
+                ),
             )
             if animation is not None:
                 fw(f"DEF {animation['transform_name']} Transform {{\n")
@@ -2011,10 +2136,15 @@ def save(
             animation.get("has_coordinates", False)
             for animation in transform_animations
         )
+        diffuse_color_count = sum(
+            animation.get("has_diffuse_color", False)
+            for animation in transform_animations
+        )
         message += (
             f"; animated {len(transform_animations)} object transform(s)"
             f" ({location_count} location, {rotation_count} rotation, "
-            f"{scale_count} scale, {deformation_count} deformation)"
+            f"{scale_count} scale, {deformation_count} deformation, "
+            f"{diffuse_color_count} diffuse color)"
         )
     if wrz_path is not None:
         message += f"; created {os.path.basename(wrz_path)}"
