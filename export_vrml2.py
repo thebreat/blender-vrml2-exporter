@@ -849,7 +849,7 @@ def _sample_shape_key_animations(
     samples = {id(obj): [] for obj in candidates}
     valid = {id(obj): True for obj in candidates}
     base_matrices = {}
-    base_topologies = {}
+    base_point_counts = {}
     with _preserve_scene_frame(scene):
         scene.frame_set(frames[0])
         for obj in candidates:
@@ -861,13 +861,13 @@ def _sample_shape_key_animations(
                 object_id = id(obj)
                 if not valid[object_id]:
                     continue
-                points, topology = _evaluated_animation_points(
+                points, _topology = _evaluated_animation_points(
                     obj,
                     base_matrices[object_id],
                 )
-                if object_id not in base_topologies:
-                    base_topologies[object_id] = topology
-                elif topology != base_topologies[object_id]:
+                if object_id not in base_point_counts:
+                    base_point_counts[object_id] = len(points)
+                elif len(points) != base_point_counts[object_id]:
                     valid[object_id] = False
                     samples[object_id] = []
                     continue

@@ -2,6 +2,11 @@
 
 All notable changes to this maintained fork are recorded here.
 
+## 0.7.0-alpha.6 - 2026-10-05
+
+- Fixed shape-key animation being skipped when Blender changed a quad's triangulation diagonal as the shape deformed.
+- Added regression coverage using a deforming quad-based cube.
+
 ## 0.7.0-alpha.5 - 2026-10-05
 
 - Added sampled shape-key deformation through VRML `CoordinateInterpolator` nodes for constant-topology, single-Shape meshes.

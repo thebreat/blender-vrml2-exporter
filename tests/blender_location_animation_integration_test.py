@@ -82,16 +82,32 @@ def main():
 
     shape_mesh = bpy.data.meshes.new("Shape Key Animation Mesh")
     shape_mesh.from_pydata(
-        [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+        [
+            (-1.0, -1.0, -1.0),
+            (-1.0, -1.0, 1.0),
+            (-1.0, 1.0, -1.0),
+            (-1.0, 1.0, 1.0),
+            (1.0, -1.0, -1.0),
+            (1.0, -1.0, 1.0),
+            (1.0, 1.0, -1.0),
+            (1.0, 1.0, 1.0),
+        ],
         [],
-        [(0, 1, 2)],
+        [
+            (0, 4, 6, 2),
+            (1, 3, 7, 5),
+            (0, 1, 5, 4),
+            (2, 6, 7, 3),
+            (0, 2, 3, 1),
+            (4, 5, 7, 6),
+        ],
     )
     shape_obj = bpy.data.objects.new("Deforming Triangle", shape_mesh)
     scene.collection.objects.link(shape_obj)
     shape_obj.location = (4.0, 0.0, 0.0)
     shape_obj.shape_key_add(name="Basis")
     lift_key = shape_obj.shape_key_add(name="Lift")
-    lift_key.data[2].co.z = 1.0
+    lift_key.data[7].co = (1.5, 4.5, 3.0)
     lift_key.value = 0.0
     lift_key.keyframe_insert(data_path="value", frame=1)
     lift_key.value = 1.0
