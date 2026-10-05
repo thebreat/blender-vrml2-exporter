@@ -68,7 +68,7 @@ class ExportVRML(bpy.types.Operator, ExportHelper):
     export_animation: BoolProperty(
         name="Export Animation",
         description=(
-            "Export mesh-object location and rotation changes over the scene frame range "
+            "Export mesh-object location, rotation, and positive scale changes over the scene frame range "
             "using VRML animation nodes"
         ),
         default=False,
@@ -85,7 +85,7 @@ class ExportVRML(bpy.types.Operator, ExportHelper):
 
     animation_frame_step: IntProperty(
         name="Sample Every",
-        description="Sample animated transforms every this many Blender frames",
+        description="Sample animated location, rotation, and scale every this many Blender frames",
         min=1,
         max=120,
         default=1,

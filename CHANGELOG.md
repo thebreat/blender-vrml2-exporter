@@ -2,6 +2,12 @@
 
 All notable changes to this maintained fork are recorded here.
 
+## 0.7.0-alpha.4 - 2026-10-05
+
+- Added sampled positive object-scale animation through VRML `PositionInterpolator` nodes routed to `Transform.set_scale`.
+- Preserved each object's starting rotation as the scale orientation so non-uniform scale animation follows Blender's local axes.
+- Added coverage for simultaneous location, rotation, and scale animation.
+
 ## 0.7.0-alpha.3 - 2026-10-05
 
 - Made click-to-play one-shot playback the default and explicitly kept the VRML timer inactive until an animated object is clicked.

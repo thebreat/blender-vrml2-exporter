@@ -137,6 +137,7 @@ writer._write_transform_animations(
             'transform_name': 'AnimatedTransform_1',
             'location_interpolator_name': 'LocationInterpolator_1',
             'rotation_interpolator_name': 'RotationInterpolator_1',
+            'scale_interpolator_name': 'ScaleInterpolator_1',
             'touch_name': 'AnimationTouch_1',
             'fractions': (0.0, 0.5, 1.0),
             'translation_deltas': (
@@ -149,8 +150,14 @@ writer._write_transform_animations(
                 (0.0, 0.0, 1.0, math.pi / 4.0),
                 (0.0, 0.0, 1.0, math.pi / 2.0),
             ),
+            'scale_ratios': (
+                (1.0, 1.0, 1.0),
+                (1.5, 0.75, 1.25),
+                (2.0, 0.5, 1.5),
+            ),
             'has_translation': True,
             'has_rotation': True,
+            'has_scale': True,
         }
     ],
     1.0,
@@ -184,6 +191,12 @@ assert (
     'AnimatedTransform_1.set_rotation'
     in animation_content
 )
+assert 'DEF ScaleInterpolator_1 PositionInterpolator {' in animation_content
+assert 'keyValue [ 1 1 1 1.5 0.75 1.25 2 0.5 1.5 ]' in animation_content
+assert (
+    'ROUTE ScaleInterpolator_1.value_changed TO AnimatedTransform_1.set_scale'
+    in animation_content
+)
 assert (
     'ROUTE AnimationTouch_1.touchTime TO AnimationClock.set_startTime'
     in animation_content
@@ -201,6 +214,10 @@ assert writer._rotation_animation_decimal_places(
         (1.0, 0.0, 0.0, 0.004),
         (1.0, 0.0, 0.0, 0.008),
     ),
+    0,
+) == 3
+assert writer._scale_animation_decimal_places(
+    ((1.0, 1.0, 1.0), (0.004, 1.0, 1.0), (0.008, 1.0, 1.0)),
     0,
 ) == 3
 

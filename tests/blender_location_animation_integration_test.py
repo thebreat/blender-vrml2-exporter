@@ -82,13 +82,17 @@ def main():
 
     obj.location = (1.0, 2.0, 3.0)
     obj.rotation_mode = "XYZ"
-    obj.rotation_euler = (0.0, 0.0, 0.0)
+    obj.rotation_euler = (0.0, 0.0, 0.5235987755982988)
+    obj.scale = (1.0, 1.0, 1.0)
     obj.keyframe_insert(data_path="location", frame=1)
     obj.keyframe_insert(data_path="rotation_euler", frame=1)
+    obj.keyframe_insert(data_path="scale", frame=1)
     obj.location = (3.0, 2.0, 3.0)
-    obj.rotation_euler = (0.0, 0.0, 1.5707963267948966)
+    obj.rotation_euler = (0.0, 0.0, 2.0943951023931953)
+    obj.scale = (2.0, 0.5, 1.5)
     obj.keyframe_insert(data_path="location", frame=25)
     obj.keyframe_insert(data_path="rotation_euler", frame=25)
+    obj.keyframe_insert(data_path="scale", frame=25)
 
     rotating_obj.rotation_mode = "XYZ"
     rotating_obj.rotation_euler = (0.0, 0.0, 0.0)
@@ -115,6 +119,7 @@ def main():
         assert "DEF AnimatedTransform_2 Transform {" in animated
         assert "center 1 2 3" in animated
         assert "center -2 0 0" in animated
+        assert "scaleOrientation 0 0 1 0.523599" in animated
         assert "DEF AnimationClock TimeSensor {" in animated
         assert "cycleInterval 1" in animated
         assert "loop FALSE" in animated
@@ -146,6 +151,13 @@ def main():
             "ROUTE RotationInterpolator_2.value_changed TO "
             "AnimatedTransform_2.set_rotation"
         ) in animated
+        assert "DEF ScaleInterpolator_1 PositionInterpolator {" in animated
+        assert "ScaleInterpolator_2" not in animated
+        assert "keyValue [ 1 1 1 1.5 0.75 1.25 2 0.5 1.5 ]" in animated
+        assert (
+            "ROUTE ScaleInterpolator_1.value_changed TO "
+            "AnimatedTransform_1.set_scale"
+        ) in animated
         assert (
             "ROUTE AnimationTouch_1.touchTime TO AnimationClock.set_startTime"
         ) in animated
@@ -169,6 +181,7 @@ def main():
         assert "TimeSensor" not in static
         assert "PositionInterpolator" not in static
         assert "OrientationInterpolator" not in static
+        assert "ScaleInterpolator" not in static
         assert "AnimatedTransform" not in static
 
     clear_scene()

@@ -673,30 +673,33 @@ def _sample_transform_animations(
     frame_end,
     frame_step,
 ):
-    """Sample changing exported world locations and rotations."""
+    """Sample changing exported world locations, rotations, and positive scales."""
     frames = _animation_frames(frame_start, frame_end, frame_step)
     if len(frames) < 2:
         return frames, []
 
     position_samples = [[] for _obj in mesh_objects]
     rotation_samples = [[] for _obj in mesh_objects]
+    scale_samples = [[] for _obj in mesh_objects]
     with _preserve_scene_frame(scene):
         for frame in frames:
             scene.frame_set(frame)
             for index, obj in enumerate(mesh_objects):
                 export_matrix = global_matrix @ obj.matrix_world
                 position_samples[index].append(_matrix_translation(export_matrix))
-                rotation = export_matrix.decompose()[1]
+                _translation, rotation, scale = export_matrix.decompose()
                 rotation.normalize()
                 rotation_samples[index].append(rotation)
+                scale_samples[index].append(tuple(float(value) for value in scale))
 
     duration = float(frame_end - frame_start)
     fractions = tuple((frame - frame_start) / duration for frame in frames)
     animations = []
-    for obj, positions, rotations in zip(
+    for obj, positions, rotations, scales in zip(
         mesh_objects,
         position_samples,
         rotation_samples,
+        scale_samples,
     ):
         start_position = positions[0]
         translation_deltas = tuple(
@@ -714,7 +717,28 @@ def _sample_transform_animations(
             1.0 - abs(_quaternion_dot(start_rotation, rotation)) > 1.0e-10
             for rotation in rotations[1:]
         )
-        if not has_translation and not has_rotation:
+
+        start_scale = scales[0]
+        scale_supported = all(
+            component > 1.0e-9
+            for scale in scales
+            for component in scale
+        )
+        if scale_supported:
+            scale_ratios = tuple(
+                tuple(scale[axis] / start_scale[axis] for axis in range(3))
+                for scale in scales
+            )
+            has_scale = any(
+                abs(component - 1.0) > 1.0e-6
+                for ratio in scale_ratios[1:]
+                for component in ratio
+            )
+        else:
+            scale_ratios = tuple((1.0, 1.0, 1.0) for _scale in scales)
+            has_scale = False
+
+        if not has_translation and not has_rotation and not has_scale:
             continue
 
         rotation_deltas = []
@@ -734,13 +758,17 @@ def _sample_transform_animations(
                 "transform_name": f"AnimatedTransform_{index}",
                 "location_interpolator_name": f"LocationInterpolator_{index}",
                 "rotation_interpolator_name": f"RotationInterpolator_{index}",
+                "scale_interpolator_name": f"ScaleInterpolator_{index}",
                 "touch_name": f"AnimationTouch_{index}",
                 "fractions": fractions,
                 "center": start_position,
                 "translation_deltas": translation_deltas,
                 "rotation_deltas": tuple(rotation_deltas),
+                "scale_orientation": _quaternion_axis_angle(start_rotation),
+                "scale_ratios": scale_ratios,
                 "has_translation": has_translation,
                 "has_rotation": has_rotation,
+                "has_scale": has_scale,
             }
         )
     return frames, animations
@@ -814,6 +842,31 @@ def _rotation_animation_decimal_places(rotations, requested, maximum=9):
             )
             for index, (previous, current) in enumerate(
                 zip(rotations, rotations[1:]),
+                start=1,
+            )
+        )
+        if not collapsed_change:
+            return decimals
+    return maximum
+
+
+def _scale_animation_decimal_places(scales, requested, maximum=9):
+    """Keep animated positive scale values non-zero and visibly distinct."""
+    for decimals in range(requested, maximum + 1):
+        formatted = [
+            tuple(_format_float(component, decimals) for component in scale)
+            for scale in scales
+        ]
+        if any("0" in scale for scale in formatted):
+            continue
+        collapsed_change = any(
+            any(
+                abs(current[axis] - previous[axis]) > 1.0e-9
+                for axis in range(3)
+            )
+            and formatted[index] == formatted[index - 1]
+            for index, (previous, current) in enumerate(
+                zip(scales, scales[1:]),
                 start=1,
             )
         )
@@ -912,6 +965,39 @@ def _write_transform_animations(
             fw(
                 f"ROUTE {animation['rotation_interpolator_name']}.value_changed TO "
                 f"{animation['transform_name']}.set_rotation\n"
+            )
+
+        if animation["has_scale"]:
+            scale_decimals = _scale_animation_decimal_places(
+                animation["scale_ratios"],
+                decimal_places,
+            )
+            fw(
+                f"\nDEF {animation['scale_interpolator_name']} "
+                "PositionInterpolator {\n"
+            )
+            fw("\tkey [ ")
+            for fraction in animation["fractions"]:
+                fw(f"{_format_float(fraction, timing_decimals)} ")
+            fw("]\n")
+            fw("\tkeyValue [ ")
+            for scale in animation["scale_ratios"]:
+                fw(
+                    "%s %s %s "
+                    % tuple(
+                        _format_float(component, scale_decimals)
+                        for component in scale
+                    )
+                )
+            fw("]\n")
+            fw("}\n")
+            fw(
+                f"ROUTE AnimationClock.fraction_changed TO "
+                f"{animation['scale_interpolator_name']}.set_fraction\n"
+            )
+            fw(
+                f"ROUTE {animation['scale_interpolator_name']}.value_changed TO "
+                f"{animation['transform_name']}.set_scale\n"
             )
 
         if not loop:
@@ -1613,12 +1699,20 @@ def save(
             )
             if animation is not None:
                 fw(f"DEF {animation['transform_name']} Transform {{\n")
-                if animation["has_rotation"]:
+                if animation["has_rotation"] or animation["has_scale"]:
                     fw(
                         "\tcenter %s %s %s\n"
                         % tuple(
                             _format_float(component, decimal_places)
                             for component in animation["center"]
+                        )
+                    )
+                if animation["has_scale"]:
+                    fw(
+                        "\tscaleOrientation %s %s %s %s\n"
+                        % tuple(
+                            _format_float(component, decimal_places)
+                            for component in animation["scale_orientation"]
                         )
                     )
                 fw("\tchildren [\n")
@@ -1655,9 +1749,13 @@ def save(
         rotation_count = sum(
             animation["has_rotation"] for animation in transform_animations
         )
+        scale_count = sum(
+            animation["has_scale"] for animation in transform_animations
+        )
         message += (
             f"; animated {len(transform_animations)} object transform(s)"
-            f" ({location_count} location, {rotation_count} rotation)"
+            f" ({location_count} location, {rotation_count} rotation, "
+            f"{scale_count} scale)"
         )
     if wrz_path is not None:
         message += f"; created {os.path.basename(wrz_path)}"
