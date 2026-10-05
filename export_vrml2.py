@@ -40,6 +40,8 @@ _VRML2_MATERIAL_DEFAULTS = {
     "transparency": 0.0,
 }
 
+_VRML2_MATERIAL_POINTER_NAME = "vrml2_material"
+
 
 def _clamp_material_value(value, default):
     """Return one finite VRML material value in the required 0..1 range."""
@@ -70,6 +72,32 @@ def _material_studio_settings(material):
     """Read VRML2 Material Studio data without importing or requiring that add-on."""
     if material is None:
         return None
+
+
+    # When Material Studio is enabled, its RNA PropertyGroup is the live source
+    # Blender evaluates for keyframes. The ID properties below are a portable
+    # static-export snapshot and may not be refreshed during frame evaluation.
+    live_properties = getattr(material, _VRML2_MATERIAL_POINTER_NAME, None)
+    if (
+        live_properties is not None
+        and bool(getattr(live_properties, "initialized", False))
+        and bool(getattr(live_properties, "enabled", False))
+    ):
+        settings = {}
+        for field in ("diffuse_color", "emissive_color", "specular_color"):
+            default = _VRML2_MATERIAL_DEFAULTS[field]
+            settings[field] = _clamp_material_color(
+                getattr(live_properties, field, default),
+                default,
+            )
+        for field in ("ambient_intensity", "shininess", "transparency"):
+            default = _VRML2_MATERIAL_DEFAULTS[field]
+            settings[field] = _clamp_material_value(
+                getattr(live_properties, field, default),
+                default,
+            )
+        return settings
+
     try:
         initialized = bool(material.get(_VRML2_MATERIAL_KEYS["initialized"], False))
         enabled = bool(material.get(_VRML2_MATERIAL_KEYS["enabled"], False))

@@ -10,7 +10,7 @@ A maintained Blender Extension for exporting mesh objects to **VRML 2.0 (`.wrl`)
 - **Bug reports and feature requests:** [GitHub Issues](https://github.com/thebreat/blender-vrml2-exporter/issues)
 - **License:** GNU General Public License, version 3 or any later version (`GPL-3.0-or-later`)
 - **Extension ID:** `io_scene_vrml2_export`
-- **Current package version:** `0.7.0-alpha.8`
+- **Current package version:** `0.7.0-alpha.8.1`
 - **Minimum Blender version:** `4.2.0`
 
 ## Features
@@ -50,13 +50,13 @@ A maintained Blender Extension for exporting mesh objects to **VRML 2.0 (`.wrl`)
 
 ## Install the packaged extension
 
-Use the included distributable archive named `io_scene_vrml2_export-0.7.0-alpha.8.zip`. **Do not extract it first.**
+Use the included distributable archive named `io_scene_vrml2_export-0.7.0-alpha.8.1.zip`. **Do not extract it first.**
 
 1. Open Blender 4.2 or newer.
 2. Open **Edit > Preferences**.
 3. Open **Get Extensions** or **Extensions**, depending on the Blender release.
 4. Open the menu in the upper-right corner and choose **Install from Disk**.
-5. Select `io_scene_vrml2_export-0.7.0-alpha.8.zip`.
+5. Select `io_scene_vrml2_export-0.7.0-alpha.8.1.zip`.
 6. Confirm the installation and enable **VRML2 Exporter** if Blender does not enable it automatically.
 7. Close Preferences.
 
@@ -138,7 +138,7 @@ crease angle do not need to be duplicated.
 ## Known limitations
 
 - The extension exports mesh objects only. Cameras, lights, armature objects/bones, and scene hierarchy are not exported. Armatures can still drive mesh deformation that is baked into coordinate animation.
-- Animation support in `0.7.0-alpha.8` covers evaluated mesh-object world-location, world-rotation, positive scale, shape-key or Armature modifier changes on stable-vertex-count meshes, and diffuse color changes on objects that export as one VRML Shape with one material. Scale that reaches zero or becomes negative, multi-Shape deformation or material animation, other topology-changing deforming modifiers, other material fields, and visibility animation are not yet exported.
+- Animation support in `0.7.0-alpha.8.1` covers evaluated mesh-object world-location, world-rotation, positive scale, shape-key or Armature modifier changes on stable-vertex-count meshes, and Blender or VRML2 Material Studio diffuse color changes on objects that export as one VRML Shape with one material. Scale that reaches zero or becomes negative, multi-Shape deformation or material animation, other topology-changing deforming modifiers, other material fields, and visibility animation are not yet exported.
 - Geometry is triangulated during export.
 - Mirrored (negative-scale) and sheared object transforms are baked into coordinates rather than instanced because VRML97 `Transform` scale values must be positive. Reflected geometry has its triangle winding corrected for one-sided VRML viewers.
 - Linked objects whose evaluated geometry differs because of modifiers, colors, or UV data are not combined.

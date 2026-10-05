@@ -2,6 +2,12 @@
 
 All notable changes to this maintained fork are recorded here.
 
+## 0.7.0-alpha.8.1 - 2026-10-05
+
+- Fixed diffuse color animation authored in VRML2 Material Studio by sampling its live `vrml2_material.diffuse_color` property instead of its static custom-property snapshot.
+- Kept the snapshot fallback for files exported while VRML2 Material Studio is disabled or unavailable.
+- Updated the Blender integration test to reproduce Material Studio animation with a deliberately stale snapshot value.
+
 ## 0.7.0-alpha.8 - 2026-10-05
 
 - Added sampled diffuse material color animation through VRML `ColorInterpolator` nodes.

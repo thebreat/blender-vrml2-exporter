@@ -12,6 +12,12 @@ import tempfile  # noqa: E402
 from pathlib import Path  # noqa: E402
 
 import bpy  # noqa: E402
+from bpy.props import (  # noqa: E402
+    BoolProperty,
+    FloatProperty,
+    FloatVectorProperty,
+    PointerProperty,
+)
 from mathutils import Matrix  # noqa: E402
 
 
@@ -34,6 +40,17 @@ def load_extension():
 class Operator:
     def report(self, _levels, message):
         self.message = message
+
+
+class TestVRML2MaterialProperties(bpy.types.PropertyGroup):
+    initialized: BoolProperty(default=False)
+    enabled: BoolProperty(default=True)
+    diffuse_color: FloatVectorProperty(size=3, default=(0.8, 0.8, 0.8))
+    emissive_color: FloatVectorProperty(size=3, default=(0.0, 0.0, 0.0))
+    specular_color: FloatVectorProperty(size=3, default=(0.0, 0.0, 0.0))
+    ambient_intensity: FloatProperty(default=0.2)
+    shininess: FloatProperty(default=0.2)
+    transparency: FloatProperty(default=0.0)
 
 
 def clear_scene():
@@ -59,6 +76,10 @@ def export(extension, path, **keywords):
 
 def main():
     extension = load_extension()
+    bpy.utils.register_class(TestVRML2MaterialProperties)
+    bpy.types.Material.vrml2_material = PointerProperty(
+        type=TestVRML2MaterialProperties
+    )
     clear_scene()
     scene = bpy.context.scene
     scene.frame_start = 1
@@ -156,10 +177,16 @@ def main():
     color_obj.location = (10.0, 0.0, 0.0)
     color_material = bpy.data.materials.new("Animated Diffuse Material")
     color_obj.data.materials.append(color_material)
-    color_material.diffuse_color = (1.0, 0.0, 0.0, 1.0)
-    color_material.keyframe_insert(data_path="diffuse_color", frame=1)
-    color_material.diffuse_color = (0.0, 0.0, 1.0, 1.0)
-    color_material.keyframe_insert(data_path="diffuse_color", frame=25)
+    color_material["vrml2_initialized"] = True
+    color_material["vrml2_enabled"] = True
+    color_material["vrml2_diffuseColor"] = (0.25, 0.25, 0.25)
+    studio_material = color_material.vrml2_material
+    studio_material.initialized = True
+    studio_material.enabled = True
+    studio_material.diffuse_color = (1.0, 0.0, 0.0)
+    studio_material.keyframe_insert(data_path="diffuse_color", frame=1)
+    studio_material.diffuse_color = (0.0, 0.0, 1.0)
+    studio_material.keyframe_insert(data_path="diffuse_color", frame=25)
 
     obj.location = (1.0, 2.0, 3.0)
     obj.rotation_mode = "XYZ"
@@ -260,6 +287,7 @@ def main():
         ) in animated
         assert "material DEF AnimatedMaterial_5 Material {" in animated
         assert "DEF ColorInterpolator_5 ColorInterpolator {" in animated
+        assert "keyValue [ 1 0 0" in animated
         assert (
             "ROUTE AnimationClock.fraction_changed TO "
             "ColorInterpolator_5.set_fraction"
@@ -306,6 +334,8 @@ def main():
     bpy.data.armatures.remove(armature_data)
     bpy.data.meshes.remove(color_mesh)
     bpy.data.materials.remove(color_material)
+    del bpy.types.Material.vrml2_material
+    bpy.utils.unregister_class(TestVRML2MaterialProperties)
     print("Blender transform animation integration test passed.")
 
 
