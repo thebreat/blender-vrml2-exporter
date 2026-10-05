@@ -2,6 +2,12 @@
 
 All notable changes to this maintained fork are recorded here.
 
+## 0.7.0-alpha.7 - 2026-10-05
+
+- Added sampled Armature modifier deformation through VRML `CoordinateInterpolator` nodes for meshes whose evaluated vertex count remains stable.
+- Armature objects and bones remain Blender-side controls; the resulting animated mesh positions are baked into the VRML file.
+- Added a Blender integration test with a genuinely animated bone and fully weighted mesh.
+
 ## 0.7.0-alpha.6 - 2026-10-05
 
 - Fixed shape-key animation being skipped when Blender changed a quad's triangulation diagonal as the shape deformed.

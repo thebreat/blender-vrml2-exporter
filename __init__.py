@@ -68,7 +68,7 @@ class ExportVRML(bpy.types.Operator, ExportHelper):
     export_animation: BoolProperty(
         name="Export Animation",
         description=(
-            "Export mesh-object transforms and compatible shape-key deformation "
+            "Export mesh-object transforms and compatible mesh deformation "
             "over the scene frame range using VRML animation nodes"
         ),
         default=False,

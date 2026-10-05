@@ -824,7 +824,16 @@ def _evaluated_animation_points(obj, base_matrix):
         obj_eval.to_mesh_clear()
 
 
-def _sample_shape_key_animations(
+def _has_enabled_armature_modifier(obj):
+    """Return whether an object has an enabled Armature modifier."""
+    return any(
+        modifier.type == "ARMATURE"
+        and modifier.show_viewport
+        for modifier in obj.modifiers
+    )
+
+
+def _sample_coordinate_animations(
     scene,
     mesh_objects,
     global_matrix,
@@ -833,14 +842,17 @@ def _sample_shape_key_animations(
     use_color,
     color_type,
 ):
-    """Sample shape-key deformation when evaluated mesh topology stays fixed."""
+    """Sample supported deformation when evaluated vertex counts stay fixed."""
     if len(frames) < 2 or not use_mesh_modifiers:
         return {}
 
     candidates = [
         obj
         for obj in mesh_objects
-        if getattr(obj.data, "shape_keys", None) is not None
+        if (
+            getattr(obj.data, "shape_keys", None) is not None
+            or _has_enabled_armature_modifier(obj)
+        )
         and not _object_needs_split_material_shapes(obj, use_color, color_type)
     ]
     if not candidates:
@@ -1807,7 +1819,7 @@ def save(
             scene.frame_end,
             animation_frame_step,
         )
-        shape_key_animations = _sample_shape_key_animations(
+        coordinate_animations = _sample_coordinate_animations(
             scene,
             mesh_objects,
             global_matrix,
@@ -1831,7 +1843,7 @@ def save(
         )
         for obj in mesh_objects:
             object_id = id(obj)
-            coordinate_values = shape_key_animations.get(object_id)
+            coordinate_values = coordinate_animations.get(object_id)
             if coordinate_values is None:
                 continue
             animation = animations_by_id.get(object_id)

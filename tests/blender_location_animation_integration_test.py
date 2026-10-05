@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import math
 import sys
 
 sys.dont_write_bytecode = True
@@ -113,6 +114,37 @@ def main():
     lift_key.value = 1.0
     lift_key.keyframe_insert(data_path="value", frame=25)
 
+    armature_data = bpy.data.armatures.new("Animation Armature")
+    armature_obj = bpy.data.objects.new("Animation Armature", armature_data)
+    scene.collection.objects.link(armature_obj)
+    bpy.context.view_layer.objects.active = armature_obj
+    armature_obj.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bone = armature_data.edit_bones.new("Bone")
+    bone.head = (0.0, 0.0, 0.0)
+    bone.tail = (0.0, 0.0, 2.0)
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+    armature_mesh = bpy.data.meshes.new("Armature Animation Mesh")
+    armature_mesh.from_pydata(
+        [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, 1.0)],
+        [],
+        [(0, 1, 2)],
+    )
+    armature_mesh_obj = bpy.data.objects.new("Armature Triangle", armature_mesh)
+    scene.collection.objects.link(armature_mesh_obj)
+    armature_mesh_obj.location = (7.0, 0.0, 0.0)
+    vertex_group = armature_mesh_obj.vertex_groups.new(name="Bone")
+    vertex_group.add([0, 1, 2], 1.0, "REPLACE")
+    armature_modifier = armature_mesh_obj.modifiers.new("Armature", "ARMATURE")
+    armature_modifier.object = armature_obj
+    pose_bone = armature_obj.pose.bones["Bone"]
+    pose_bone.rotation_mode = "XYZ"
+    pose_bone.rotation_euler = (0.0, 0.0, 0.0)
+    pose_bone.keyframe_insert(data_path="rotation_euler", frame=1)
+    pose_bone.rotation_euler = (0.0, 0.0, math.pi / 2.0)
+    pose_bone.keyframe_insert(data_path="rotation_euler", frame=25)
+
     obj.location = (1.0, 2.0, 3.0)
     obj.rotation_mode = "XYZ"
     obj.rotation_euler = (0.0, 0.0, 0.5235987755982988)
@@ -147,12 +179,13 @@ def main():
             use_mesh_modifiers=True,
         )
         assert scene.frame_current == 7
-        assert animated.count("Shape {") == 4
+        assert animated.count("Shape {") == 5
         animated_transform_count = animated.count("DEF AnimatedTransform_")
-        assert animated_transform_count == 3, animated_transform_count
+        assert animated_transform_count == 4, animated_transform_count
         assert "DEF AnimatedTransform_1 Transform {" in animated
         assert "DEF AnimatedTransform_2 Transform {" in animated
         assert "DEF AnimatedTransform_3 Transform {" in animated
+        assert "DEF AnimatedTransform_4 Transform {" in animated
         assert "center 1 2 3" in animated
         assert "center -2 0 0" in animated
         assert "scaleOrientation 0 0 1 0.523599" in animated
@@ -200,6 +233,12 @@ def main():
             "ROUTE CoordinateInterpolator_3.value_changed TO "
             "AnimatedCoordinates_3.set_point"
         ) in animated
+        assert "coord DEF AnimatedCoordinates_4 Coordinate {" in animated
+        assert "DEF CoordinateInterpolator_4 CoordinateInterpolator {" in animated
+        assert (
+            "ROUTE CoordinateInterpolator_4.value_changed TO "
+            "AnimatedCoordinates_4.set_point"
+        ) in animated
         assert (
             "ROUTE AnimationTouch_1.touchTime TO AnimationClock.set_startTime"
         ) in animated
@@ -231,6 +270,8 @@ def main():
     clear_scene()
     bpy.data.meshes.remove(mesh)
     bpy.data.meshes.remove(shape_mesh)
+    bpy.data.meshes.remove(armature_mesh)
+    bpy.data.armatures.remove(armature_data)
     print("Blender transform animation integration test passed.")
 
 
