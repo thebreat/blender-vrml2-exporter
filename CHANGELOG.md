@@ -2,6 +2,12 @@
 
 All notable changes to this maintained fork are recorded here.
 
+## 0.7.0-alpha.5 - 2026-10-05
+
+- Added sampled shape-key deformation through VRML `CoordinateInterpolator` nodes for constant-topology, single-Shape meshes.
+- Kept animated coordinate geometry independent from DEF/USE geometry reuse so one object's deformation cannot alter another object.
+- Added adaptive coordinate-animation precision and Blender-side shape-key coverage.
+
 ## 0.7.0-alpha.4 - 2026-10-05
 
 - Added sampled positive object-scale animation through VRML `PositionInterpolator` nodes routed to `Transform.set_scale`.

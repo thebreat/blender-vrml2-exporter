@@ -80,6 +80,23 @@ def main():
     scene.collection.objects.link(static_obj)
     static_obj.location = (0.0, -2.0, 0.0)
 
+    shape_mesh = bpy.data.meshes.new("Shape Key Animation Mesh")
+    shape_mesh.from_pydata(
+        [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+        [],
+        [(0, 1, 2)],
+    )
+    shape_obj = bpy.data.objects.new("Deforming Triangle", shape_mesh)
+    scene.collection.objects.link(shape_obj)
+    shape_obj.location = (4.0, 0.0, 0.0)
+    shape_obj.shape_key_add(name="Basis")
+    lift_key = shape_obj.shape_key_add(name="Lift")
+    lift_key.data[2].co.z = 1.0
+    lift_key.value = 0.0
+    lift_key.keyframe_insert(data_path="value", frame=1)
+    lift_key.value = 1.0
+    lift_key.keyframe_insert(data_path="value", frame=25)
+
     obj.location = (1.0, 2.0, 3.0)
     obj.rotation_mode = "XYZ"
     obj.rotation_euler = (0.0, 0.0, 0.5235987755982988)
@@ -111,12 +128,15 @@ def main():
             export_animation=True,
             animation_loop=False,
             animation_frame_step=12,
+            use_mesh_modifiers=True,
         )
         assert scene.frame_current == 7
-        assert animated.count("Shape {") == 3
-        assert animated.count("DEF AnimatedTransform_") == 2
+        assert animated.count("Shape {") == 4
+        animated_transform_count = animated.count("DEF AnimatedTransform_")
+        assert animated_transform_count == 3, animated_transform_count
         assert "DEF AnimatedTransform_1 Transform {" in animated
         assert "DEF AnimatedTransform_2 Transform {" in animated
+        assert "DEF AnimatedTransform_3 Transform {" in animated
         assert "center 1 2 3" in animated
         assert "center -2 0 0" in animated
         assert "scaleOrientation 0 0 1 0.523599" in animated
@@ -158,6 +178,12 @@ def main():
             "ROUTE ScaleInterpolator_1.value_changed TO "
             "AnimatedTransform_1.set_scale"
         ) in animated
+        assert "coord DEF AnimatedCoordinates_3 Coordinate {" in animated
+        assert "DEF CoordinateInterpolator_3 CoordinateInterpolator {" in animated
+        assert (
+            "ROUTE CoordinateInterpolator_3.value_changed TO "
+            "AnimatedCoordinates_3.set_point"
+        ) in animated
         assert (
             "ROUTE AnimationTouch_1.touchTime TO AnimationClock.set_startTime"
         ) in animated
@@ -169,6 +195,7 @@ def main():
             animation_loop=True,
             animation_frame_step=12,
             geometry_reuse="LINKED",
+            use_mesh_modifiers=True,
         )
         assert "loop TRUE" in looping
         assert "startTime -1" not in looping
@@ -182,10 +209,12 @@ def main():
         assert "PositionInterpolator" not in static
         assert "OrientationInterpolator" not in static
         assert "ScaleInterpolator" not in static
+        assert "CoordinateInterpolator" not in static
         assert "AnimatedTransform" not in static
 
     clear_scene()
     bpy.data.meshes.remove(mesh)
+    bpy.data.meshes.remove(shape_mesh)
     print("Blender transform animation integration test passed.")
 
 

@@ -471,6 +471,7 @@ def _write_indexed_face_set(
     deduplicate_uvs,
     crease_angle,
     two_sided_faces=False,
+    coordinate_name=None,
 ):
     """Write the reusable geometry portion of a VRML Shape node."""
     coordinate_decimals = _coordinate_decimal_places(bm, decimal_places)
@@ -482,7 +483,10 @@ def _write_indexed_face_set(
     if crease_angle > 0.0:
         angle_decimals = max(decimal_places, 6)
         fw(f"\tcreaseAngle {_format_float(crease_angle, angle_decimals)}\n")
-    fw("\tcoord Coordinate {\n")
+    if coordinate_name is None:
+        fw("\tcoord Coordinate {\n")
+    else:
+        fw(f"\tcoord DEF {coordinate_name} Coordinate {{\n")
     fw("\t\tpoint [ ")
     for vertex in bm.verts:
         fw(
@@ -774,6 +778,122 @@ def _sample_transform_animations(
     return frames, animations
 
 
+def _object_needs_split_material_shapes(obj, use_color, color_type):
+    """Return whether full per-material settings require multiple Shapes."""
+    if not use_color or color_type != "MATERIAL":
+        return False
+    materials = [slot.material for slot in obj.material_slots]
+    if len(materials) < 2:
+        return False
+    settings = [_material_export_settings(material) for material in materials]
+    used_indices = {
+        min(max(int(polygon.material_index), 0), len(settings) - 1)
+        for polygon in obj.data.polygons
+    }
+    return any(len(settings[index]) > 1 for index in used_indices)
+
+
+def _evaluated_animation_points(obj, base_matrix):
+    """Return evaluated, export-space points and topology for one scene frame."""
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    obj_eval = obj.evaluated_get(depsgraph)
+    mesh = obj_eval.to_mesh(
+        preserve_all_data_layers=True,
+        depsgraph=depsgraph,
+    )
+    bm = bmesh.new()
+    try:
+        bm.from_mesh(mesh)
+        bmesh.ops.triangulate(bm, faces=list(bm.faces))
+        crease_angle = _crease_angle_for_mesh(obj, bm, True)
+        _split_sharp_edges_for_crease_angle(bm, crease_angle)
+        _apply_baked_transform(bm, base_matrix)
+        bm.verts.index_update()
+        bm.faces.index_update()
+        points = tuple(
+            tuple(float(value) for value in vertex.co[:3])
+            for vertex in bm.verts
+        )
+        topology = tuple(
+            tuple(loop.vert.index for loop in face.loops)
+            for face in bm.faces
+        )
+        return points, topology
+    finally:
+        bm.free()
+        obj_eval.to_mesh_clear()
+
+
+def _sample_shape_key_animations(
+    scene,
+    mesh_objects,
+    global_matrix,
+    frames,
+    use_mesh_modifiers,
+    use_color,
+    color_type,
+):
+    """Sample shape-key deformation when evaluated mesh topology stays fixed."""
+    if len(frames) < 2 or not use_mesh_modifiers:
+        return {}
+
+    candidates = [
+        obj
+        for obj in mesh_objects
+        if getattr(obj.data, "shape_keys", None) is not None
+        and not _object_needs_split_material_shapes(obj, use_color, color_type)
+    ]
+    if not candidates:
+        return {}
+
+    samples = {id(obj): [] for obj in candidates}
+    valid = {id(obj): True for obj in candidates}
+    base_matrices = {}
+    base_topologies = {}
+    with _preserve_scene_frame(scene):
+        scene.frame_set(frames[0])
+        for obj in candidates:
+            base_matrices[id(obj)] = global_matrix @ obj.matrix_world.copy()
+
+        for frame in frames:
+            scene.frame_set(frame)
+            for obj in candidates:
+                object_id = id(obj)
+                if not valid[object_id]:
+                    continue
+                points, topology = _evaluated_animation_points(
+                    obj,
+                    base_matrices[object_id],
+                )
+                if object_id not in base_topologies:
+                    base_topologies[object_id] = topology
+                elif topology != base_topologies[object_id]:
+                    valid[object_id] = False
+                    samples[object_id] = []
+                    continue
+                samples[object_id].append(points)
+
+    animations = {}
+    for obj in candidates:
+        object_id = id(obj)
+        point_frames = samples[object_id]
+        if not valid[object_id] or len(point_frames) != len(frames):
+            continue
+        baseline = point_frames[0]
+        if not any(
+            abs(value - baseline[vertex_index][axis]) > 1.0e-9
+            for points in point_frames[1:]
+            for vertex_index, point in enumerate(points)
+            for axis, value in enumerate(point)
+        ):
+            continue
+        animations[object_id] = tuple(
+            tuple(component for point in points for component in point)
+            for points in point_frames
+        )
+    return animations
+
+
 def _animation_decimal_places(deltas, requested, maximum=9):
     """Retain enough precision that sampled numeric changes do not disappear."""
     component_count = len(deltas[0]) if deltas else 0
@@ -869,6 +989,27 @@ def _scale_animation_decimal_places(scales, requested, maximum=9):
                 zip(scales, scales[1:]),
                 start=1,
             )
+        )
+        if not collapsed_change:
+            return decimals
+    return maximum
+
+
+def _coordinate_animation_decimal_places(point_frames, requested, maximum=9):
+    """Keep every genuinely changing animated coordinate from rounding away."""
+    for decimals in range(requested, maximum + 1):
+        formatted = [
+            tuple(_format_float(component, decimals) for component in points)
+            for points in point_frames
+        ]
+        collapsed_change = any(
+            abs(current[component] - previous[component]) > 1.0e-9
+            and formatted[index][component] == formatted[index - 1][component]
+            for index, (previous, current) in enumerate(
+                zip(point_frames, point_frames[1:]),
+                start=1,
+            )
+            for component in range(len(current))
         )
         if not collapsed_change:
             return decimals
@@ -998,6 +1139,34 @@ def _write_transform_animations(
             fw(
                 f"ROUTE {animation['scale_interpolator_name']}.value_changed TO "
                 f"{animation['transform_name']}.set_scale\n"
+            )
+
+        if animation.get("has_coordinates", False):
+            coordinate_decimals = _coordinate_animation_decimal_places(
+                animation["coordinate_values"],
+                decimal_places,
+            )
+            fw(
+                f"\nDEF {animation['coordinate_interpolator_name']} "
+                "CoordinateInterpolator {\n"
+            )
+            fw("\tkey [ ")
+            for fraction in animation["fractions"]:
+                fw(f"{_format_float(fraction, timing_decimals)} ")
+            fw("]\n")
+            fw("\tkeyValue [ ")
+            for points in animation["coordinate_values"]:
+                for component in points:
+                    fw(f"{_format_float(component, coordinate_decimals)} ")
+            fw("]\n")
+            fw("}\n")
+            fw(
+                f"ROUTE AnimationClock.fraction_changed TO "
+                f"{animation['coordinate_interpolator_name']}.set_fraction\n"
+            )
+            fw(
+                f"ROUTE {animation['coordinate_interpolator_name']}.value_changed TO "
+                f"{animation['coordinate_name']}.set_point\n"
             )
 
         if not loop:
@@ -1245,6 +1414,7 @@ def save_bmesh(
     crease_angle=0.0,
     material_settings=None,
     two_sided_faces=False,
+    coordinate_name=None,
 ):
     """Write one triangulated BMesh as a VRML Shape node."""
     base_src = os.path.dirname(bpy.data.filepath) or os.getcwd()
@@ -1327,6 +1497,7 @@ def save_bmesh(
         deduplicate_uvs,
         crease_angle,
         two_sided_faces,
+        coordinate_name,
     )
     geometry_text = geometry_buffer.getvalue()
     geometry_indent = f"{indent}\t"
@@ -1396,6 +1567,7 @@ def save_object(
     geometry_cache,
     geometry_group,
     two_sided_faces=False,
+    coordinate_name=None,
 ):
     """Evaluate and export a single mesh object."""
     if obj.type != "MESH":
@@ -1539,6 +1711,7 @@ def save_object(
                         crease_angle,
                         [material_settings[material_index]],
                         two_sided_faces,
+                        None,
                     )
                 finally:
                     subset.free()
@@ -1564,6 +1737,7 @@ def save_object(
                 crease_angle,
                 material_settings,
                 two_sided_faces,
+                coordinate_name,
             )
         if transform is not None:
             fw("\t]\n")
@@ -1625,7 +1799,7 @@ def save(
     animation_cycle_interval = 0.0
     if export_animation:
         animation_frame = scene.frame_start
-        _frames, transform_animations = _sample_transform_animations(
+        sampled_frames, transform_animations = _sample_transform_animations(
             scene,
             mesh_objects,
             global_matrix,
@@ -1633,6 +1807,67 @@ def save(
             scene.frame_end,
             animation_frame_step,
         )
+        shape_key_animations = _sample_shape_key_animations(
+            scene,
+            mesh_objects,
+            global_matrix,
+            sampled_frames,
+            use_mesh_modifiers,
+            use_color,
+            color_type,
+        )
+        animations_by_id = {
+            id(animation["object"]): animation
+            for animation in transform_animations
+        }
+        duration = float(scene.frame_end - scene.frame_start)
+        fractions = (
+            tuple(
+                (frame - scene.frame_start) / duration
+                for frame in sampled_frames
+            )
+            if duration > 0.0
+            else (0.0,)
+        )
+        for obj in mesh_objects:
+            object_id = id(obj)
+            coordinate_values = shape_key_animations.get(object_id)
+            if coordinate_values is None:
+                continue
+            animation = animations_by_id.get(object_id)
+            if animation is None:
+                animation = {
+                    "object": obj,
+                    "fractions": fractions,
+                    "center": (0.0, 0.0, 0.0),
+                    "translation_deltas": tuple(
+                        (0.0, 0.0, 0.0) for _frame in sampled_frames
+                    ),
+                    "rotation_deltas": tuple(
+                        (0.0, 0.0, 1.0, 0.0) for _frame in sampled_frames
+                    ),
+                    "scale_orientation": (0.0, 0.0, 1.0, 0.0),
+                    "scale_ratios": tuple(
+                        (1.0, 1.0, 1.0) for _frame in sampled_frames
+                    ),
+                    "has_translation": False,
+                    "has_rotation": False,
+                    "has_scale": False,
+                }
+                transform_animations.append(animation)
+                animations_by_id[object_id] = animation
+            animation["has_coordinates"] = True
+            animation["coordinate_values"] = coordinate_values
+
+        for index, animation in enumerate(transform_animations, start=1):
+            animation["transform_name"] = f"AnimatedTransform_{index}"
+            animation["location_interpolator_name"] = f"LocationInterpolator_{index}"
+            animation["rotation_interpolator_name"] = f"RotationInterpolator_{index}"
+            animation["scale_interpolator_name"] = f"ScaleInterpolator_{index}"
+            animation["coordinate_name"] = f"AnimatedCoordinates_{index}"
+            animation["coordinate_interpolator_name"] = f"CoordinateInterpolator_{index}"
+            animation["touch_name"] = f"AnimationTouch_{index}"
+            animation.setdefault("has_coordinates", False)
         fps_base = float(scene.render.fps_base)
         if fps_base <= 0.0:
             raise ValueError("Scene frame rate must be greater than zero")
@@ -1678,6 +1913,9 @@ def save(
                 else:
                     geometry_group = ("LINKED", mesh_key)
             animation = animations_by_object.get(id(obj))
+            if animation is not None and animation["has_coordinates"]:
+                object_geometry_cache = None
+                geometry_group = None
             object_buffer = io.StringIO() if animation is not None else None
             object_writer = object_buffer.write if object_buffer is not None else fw
             reused_geometry_count += save_object(
@@ -1696,6 +1934,11 @@ def save(
                 object_geometry_cache,
                 geometry_group,
                 two_sided_faces=two_sided_faces,
+                coordinate_name=(
+                    animation["coordinate_name"]
+                    if animation is not None and animation["has_coordinates"]
+                    else None
+                ),
             )
             if animation is not None:
                 fw(f"DEF {animation['transform_name']} Transform {{\n")
@@ -1752,10 +1995,14 @@ def save(
         scale_count = sum(
             animation["has_scale"] for animation in transform_animations
         )
+        deformation_count = sum(
+            animation.get("has_coordinates", False)
+            for animation in transform_animations
+        )
         message += (
             f"; animated {len(transform_animations)} object transform(s)"
             f" ({location_count} location, {rotation_count} rotation, "
-            f"{scale_count} scale)"
+            f"{scale_count} scale, {deformation_count} deformation)"
         )
     if wrz_path is not None:
         message += f"; created {os.path.basename(wrz_path)}"

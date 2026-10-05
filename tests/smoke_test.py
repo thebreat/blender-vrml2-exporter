@@ -155,9 +155,17 @@ writer._write_transform_animations(
                 (1.5, 0.75, 1.25),
                 (2.0, 0.5, 1.5),
             ),
+            'coordinate_name': 'AnimatedCoordinates_1',
+            'coordinate_interpolator_name': 'CoordinateInterpolator_1',
+            'coordinate_values': (
+                (0.0, 0.0, 0.0),
+                (0.0, 0.0, 0.5),
+                (0.0, 0.0, 1.0),
+            ),
             'has_translation': True,
             'has_rotation': True,
             'has_scale': True,
+            'has_coordinates': True,
         }
     ],
     1.0,
@@ -195,6 +203,11 @@ assert 'DEF ScaleInterpolator_1 PositionInterpolator {' in animation_content
 assert 'keyValue [ 1 1 1 1.5 0.75 1.25 2 0.5 1.5 ]' in animation_content
 assert (
     'ROUTE ScaleInterpolator_1.value_changed TO AnimatedTransform_1.set_scale'
+    in animation_content
+)
+assert 'DEF CoordinateInterpolator_1 CoordinateInterpolator {' in animation_content
+assert (
+    'ROUTE CoordinateInterpolator_1.value_changed TO AnimatedCoordinates_1.set_point'
     in animation_content
 )
 assert (
