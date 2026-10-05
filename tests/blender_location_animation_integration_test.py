@@ -118,6 +118,7 @@ def main():
         assert "DEF AnimationClock TimeSensor {" in animated
         assert "cycleInterval 1" in animated
         assert "loop FALSE" in animated
+        assert "startTime -1" in animated
         assert "DEF AnimationTouch_1 TouchSensor { }" in animated
         assert "key [ 0 0.5 1 ]" in animated
         assert "keyValue [ 0 0 0 1 0 0 2 0 0 ]" in animated
@@ -158,6 +159,7 @@ def main():
             geometry_reuse="LINKED",
         )
         assert "loop TRUE" in looping
+        assert "startTime -1" not in looping
         assert "TouchSensor" not in looping
         assert ".touchTime" not in looping
         assert looping.count("geometry DEF Geometry_1 IndexedFaceSet") == 1

@@ -77,10 +77,10 @@ class ExportVRML(bpy.types.Operator, ExportHelper):
     animation_loop: BoolProperty(
         name="Loop Animation",
         description=(
-            "Repeat continuously; when disabled, clicking an animated object "
-            "plays the animation once"
+            "Repeat continuously and begin when the WRL opens; when disabled, "
+            "the animation stays stopped until an animated object is clicked"
         ),
-        default=True,
+        default=False,
     )
 
     animation_frame_step: IntProperty(

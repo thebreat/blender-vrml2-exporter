@@ -2,6 +2,10 @@
 
 All notable changes to this maintained fork are recorded here.
 
+## 0.7.0-alpha.3 - 2026-10-05
+
+- Made click-to-play one-shot playback the default and explicitly kept the VRML timer inactive until an animated object is clicked.
+
 ## 0.7.0-alpha.2 - 2026-10-04
 
 - Added sampled mesh-object rotation animation through VRML `OrientationInterpolator` nodes.

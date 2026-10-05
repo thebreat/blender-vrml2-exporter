@@ -841,6 +841,10 @@ def _write_transform_animations(
         % _format_float(cycle_interval, timing_decimals)
     )
     fw(f"\tloop {'TRUE' if loop else 'FALSE'}\n")
+    if not loop:
+        # A negative start time is already expired when the world loads. The
+        # TouchSensor ROUTE replaces it with the click time to begin playback.
+        fw("\tstartTime -1\n")
     fw("}\n")
 
     for animation in animations:
@@ -1505,7 +1509,7 @@ def save(
     create_wrz=False,
     two_sided_faces=False,
     export_animation=False,
-    animation_loop=True,
+    animation_loop=False,
     animation_frame_step=1,
 ):
     """Export mesh objects from the current context to a VRML 2.0 file."""

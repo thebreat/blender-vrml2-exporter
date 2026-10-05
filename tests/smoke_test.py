@@ -106,7 +106,7 @@ assert package.ExportVRML.filename_ext == '.wrl'
 assert package.ExportVRML.__annotations__['geometry_reuse']['default'] == 'LINKED'
 assert package.ExportVRML.__annotations__['two_sided_faces']['default'] is False
 assert package.ExportVRML.__annotations__['export_animation']['default'] is False
-assert package.ExportVRML.__annotations__['animation_loop']['default'] is True
+assert package.ExportVRML.__annotations__['animation_loop']['default'] is False
 assert package.ExportVRML.__annotations__['animation_frame_step']['default'] == 1
 assert package.ExportVRML.__annotations__['decimal_places']['default'] == 6
 assert package.ExportVRML.__annotations__['deduplicate_uvs']['default'] is True
@@ -161,6 +161,7 @@ animation_content = animation_buffer.getvalue()
 assert 'DEF AnimationClock TimeSensor {' in animation_content
 assert 'cycleInterval 1' in animation_content
 assert '\tloop FALSE' in animation_content
+assert '\tstartTime -1' in animation_content
 assert '\tkey [ 0 0.5 1 ]' in animation_content
 assert '\tkeyValue [ 0 0 0 1 0 0 2 0 0 ]' in animation_content
 assert (
