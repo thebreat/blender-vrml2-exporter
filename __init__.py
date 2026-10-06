@@ -83,6 +83,15 @@ class ExportVRML(bpy.types.Operator, ExportHelper):
         default=False,
     )
 
+    animation_play_together: BoolProperty(
+        name="Play Animations Together",
+        description=(
+            "Use one shared click-controlled clock so clicking any animated "
+            "object starts every exported animation together"
+        ),
+        default=False,
+    )
+
     animation_frame_step: IntProperty(
         name="Sample Every",
         description="Sample animated location, rotation, and scale every this many Blender frames",
@@ -249,6 +258,10 @@ class ExportVRML(bpy.types.Operator, ExportHelper):
         animation_row.active = self.export_animation
         animation_row.prop(self, "animation_loop")
         animation_row.prop(self, "animation_frame_step")
+
+        together_row = layout.row()
+        together_row.active = self.export_animation and not self.animation_loop
+        together_row.prop(self, "animation_play_together")
 
         frame_range_row = layout.row()
         frame_range_row.active = self.export_animation

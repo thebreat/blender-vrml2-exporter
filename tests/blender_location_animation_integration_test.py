@@ -295,6 +295,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="vrml2-location-animation-") as temp:
         export_path = Path(temp) / "animation.wrl"
         looping_path = Path(temp) / "looping-animation.wrl"
+        together_path = Path(temp) / "together-animation.wrl"
         static_path = Path(temp) / "static.wrl"
         animated = export(
             extension,
@@ -463,6 +464,36 @@ def main():
         assert ".touchTime" not in looping
         assert looping.count("geometry DEF Geometry_1 IndexedFaceSet") == 1
         assert looping.count("geometry USE Geometry_1") == 2
+
+        together = export(
+            extension,
+            together_path,
+            export_animation=True,
+            animation_loop=False,
+            animation_play_together=True,
+            animation_frame_step=12,
+            use_mesh_modifiers=True,
+            use_color=True,
+            color_type="MATERIAL",
+        )
+        assert together.count("DEF AnimationClock TimeSensor {") == 1
+        assert "AnimationClock_1" not in together
+        assert "loop FALSE" in together
+        assert "startTime -1" in together
+        assert together.count("TouchSensor { }") == 7
+        for index in range(1, 8):
+            assert (
+                f"ROUTE AnimationTouch_{index}.touchTime TO "
+                "AnimationClock.set_startTime"
+            ) in together
+        assert (
+            "ROUTE AnimationClock.fraction_changed TO "
+            "LocationInterpolator_1.set_fraction"
+        ) in together
+        assert (
+            "ROUTE AnimationClock.fraction_changed TO "
+            "TransparencyInterpolator_6_2.set_fraction"
+        ) in together
 
         static = export(extension, static_path, export_animation=False)
         assert "TimeSensor" not in static

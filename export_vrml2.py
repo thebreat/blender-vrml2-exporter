@@ -1189,29 +1189,33 @@ def _write_transform_animations(
     cycle_interval,
     loop,
     decimal_places,
+    play_together=False,
 ):
-    """Write shared looping or independent clickable animation clocks."""
+    """Write looping, shared-click, or independent animation clocks."""
     if not animations:
         return
 
     timing_decimals = max(decimal_places, 6)
     fw("\n# Transform animation\n")
-    if loop:
+    shared_clock = loop or play_together
+    if shared_clock:
         fw("DEF AnimationClock TimeSensor {\n")
         fw(
             "\tcycleInterval %s\n"
             % _format_float(cycle_interval, timing_decimals)
         )
-        fw("\tloop TRUE\n")
+        fw(f"\tloop {'TRUE' if loop else 'FALSE'}\n")
+        if not loop:
+            fw("\tstartTime -1\n")
         fw("}\n")
 
     for animation_index, animation in enumerate(animations, start=1):
         clock_name = (
             "AnimationClock"
-            if loop
+            if shared_clock
             else animation.get("clock_name", f"AnimationClock_{animation_index}")
         )
-        if not loop:
+        if not shared_clock:
             fw(f"\nDEF {clock_name} TimeSensor {{\n")
             fw(
                 "\tcycleInterval %s\n"
@@ -2069,6 +2073,7 @@ def save(
     export_animation=False,
     animation_loop=False,
     animation_frame_step=1,
+    animation_play_together=False,
 ):
     """Export mesh objects from the current context to a VRML 2.0 file."""
     if global_matrix is None:
@@ -2345,6 +2350,7 @@ def save(
             animation_cycle_interval,
             animation_loop,
             decimal_places,
+            animation_play_together,
         )
 
     if geometry_cache is not None:

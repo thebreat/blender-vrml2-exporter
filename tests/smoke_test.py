@@ -107,6 +107,7 @@ assert package.ExportVRML.__annotations__['geometry_reuse']['default'] == 'LINKE
 assert package.ExportVRML.__annotations__['two_sided_faces']['default'] is False
 assert package.ExportVRML.__annotations__['export_animation']['default'] is False
 assert package.ExportVRML.__annotations__['animation_loop']['default'] is False
+assert package.ExportVRML.__annotations__['animation_play_together']['default'] is False
 assert package.ExportVRML.__annotations__['animation_frame_step']['default'] == 1
 assert package.ExportVRML.__annotations__['decimal_places']['default'] == 6
 assert package.ExportVRML.__annotations__['deduplicate_uvs']['default'] is True
@@ -217,6 +218,49 @@ assert (
 assert animation_content.count(
     'ROUTE AnimationTouch_1.touchTime TO AnimationClock_1.set_startTime'
 ) == 1
+
+# Shared click playback uses one stopped clock. Every animated object's touch
+# sensor can start that clock, so the animations remain synchronized.
+shared_animations = []
+for index in (1, 2):
+    shared_animations.append(
+        {
+            'transform_name': f'AnimatedTransform_{index}',
+            'location_interpolator_name': f'LocationInterpolator_{index}',
+            'touch_name': f'AnimationTouch_{index}',
+            'fractions': (0.0, 1.0),
+            'translation_deltas': ((0.0, 0.0, 0.0), (float(index), 0.0, 0.0)),
+            'has_translation': True,
+            'has_rotation': False,
+            'has_scale': False,
+            'has_coordinates': False,
+        }
+    )
+shared_animation_buffer = io.StringIO()
+writer._write_transform_animations(
+    shared_animation_buffer.write,
+    shared_animations,
+    1.0,
+    False,
+    3,
+    True,
+)
+shared_animation_content = shared_animation_buffer.getvalue()
+assert shared_animation_content.count('DEF AnimationClock TimeSensor {') == 1
+assert 'AnimationClock_1' not in shared_animation_content
+assert '\tloop FALSE' in shared_animation_content
+assert '\tstartTime -1' in shared_animation_content
+assert (
+    'ROUTE AnimationTouch_1.touchTime TO AnimationClock.set_startTime'
+    in shared_animation_content
+)
+assert (
+    'ROUTE AnimationTouch_2.touchTime TO AnimationClock.set_startTime'
+    in shared_animation_content
+)
+assert shared_animation_content.count(
+    'ROUTE AnimationClock.fraction_changed TO LocationInterpolator_'
+) == 2
 assert writer._animation_decimal_places(
     ((0.0, 0.0, 0.0), (0.4, 0.0, 0.0), (0.8, 0.0, 0.0)),
     0,

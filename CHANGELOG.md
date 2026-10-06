@@ -2,6 +2,12 @@
 
 All notable changes to this maintained fork are recorded here.
 
+## 0.7.0-alpha.14 - 2026-10-06
+
+- Added an optional **Play Animations Together** export setting for synchronized click-to-play animation.
+- Routed every animated object's click sensor to one stopped shared clock when synchronization is enabled.
+- Preserved independent click clocks as the default and automatic shared looping when **Loop Animation** is enabled.
+
 ## 0.7.0-alpha.13 - 2026-10-06
 
 - Added independent Material Studio animation for multiple material slots on one mesh object.
