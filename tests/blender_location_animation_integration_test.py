@@ -184,9 +184,35 @@ def main():
     studio_material.initialized = True
     studio_material.enabled = True
     studio_material.diffuse_color = (1.0, 0.0, 0.0)
-    studio_material.keyframe_insert(data_path="diffuse_color", frame=1)
+    studio_material.emissive_color = (0.0, 0.0, 0.0)
+    studio_material.specular_color = (0.1, 0.1, 0.1)
+    studio_material.ambient_intensity = 0.2
+    studio_material.shininess = 0.1
+    studio_material.transparency = 0.0
+    for field in (
+        "diffuse_color",
+        "emissive_color",
+        "specular_color",
+        "ambient_intensity",
+        "shininess",
+        "transparency",
+    ):
+        studio_material.keyframe_insert(data_path=field, frame=1)
     studio_material.diffuse_color = (0.0, 0.0, 1.0)
-    studio_material.keyframe_insert(data_path="diffuse_color", frame=25)
+    studio_material.emissive_color = (0.2, 0.4, 0.8)
+    studio_material.specular_color = (1.0, 0.8, 0.2)
+    studio_material.ambient_intensity = 0.7
+    studio_material.shininess = 0.9
+    studio_material.transparency = 0.6
+    for field in (
+        "diffuse_color",
+        "emissive_color",
+        "specular_color",
+        "ambient_intensity",
+        "shininess",
+        "transparency",
+    ):
+        studio_material.keyframe_insert(data_path=field, frame=25)
 
     obj.location = (1.0, 2.0, 3.0)
     obj.rotation_mode = "XYZ"
@@ -296,6 +322,18 @@ def main():
             "ROUTE ColorInterpolator_5.value_changed TO "
             "AnimatedMaterial_5.set_diffuseColor"
         ) in animated
+        for interpolator, node_type, vrml_field in (
+            ("EmissiveColorInterpolator_5", "ColorInterpolator", "emissiveColor"),
+            ("SpecularColorInterpolator_5", "ColorInterpolator", "specularColor"),
+            ("AmbientIntensityInterpolator_5", "ScalarInterpolator", "ambientIntensity"),
+            ("ShininessInterpolator_5", "ScalarInterpolator", "shininess"),
+            ("TransparencyInterpolator_5", "ScalarInterpolator", "transparency"),
+        ):
+            assert f"DEF {interpolator} {node_type} {{" in animated
+            assert (
+                f"ROUTE {interpolator}.value_changed TO "
+                f"AnimatedMaterial_5.set_{vrml_field}"
+            ) in animated
         assert (
             "ROUTE AnimationTouch_1.touchTime TO AnimationClock.set_startTime"
         ) in animated
@@ -325,6 +363,7 @@ def main():
         assert "ScaleInterpolator" not in static
         assert "CoordinateInterpolator" not in static
         assert "ColorInterpolator" not in static
+        assert "ScalarInterpolator" not in static
         assert "AnimatedTransform" not in static
 
     clear_scene()

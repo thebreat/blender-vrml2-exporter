@@ -68,7 +68,7 @@ class ExportVRML(bpy.types.Operator, ExportHelper):
     export_animation: BoolProperty(
         name="Export Animation",
         description=(
-            "Export mesh transforms, deformation, and diffuse material color "
+            "Export mesh transforms, deformation, and material settings "
             "over the scene frame range using VRML animation nodes"
         ),
         default=False,

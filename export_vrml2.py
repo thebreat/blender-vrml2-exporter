@@ -42,6 +42,18 @@ _VRML2_MATERIAL_DEFAULTS = {
 
 _VRML2_MATERIAL_POINTER_NAME = "vrml2_material"
 
+_VRML2_ANIMATED_COLOR_FIELDS = (
+    ("diffuse_color", "DiffuseColor", "diffuseColor"),
+    ("emissive_color", "EmissiveColor", "emissiveColor"),
+    ("specular_color", "SpecularColor", "specularColor"),
+)
+
+_VRML2_ANIMATED_SCALAR_FIELDS = (
+    ("ambient_intensity", "AmbientIntensity", "ambientIntensity"),
+    ("shininess", "Shininess", "shininess"),
+    ("transparency", "Transparency", "transparency"),
+)
+
 
 def _clamp_material_value(value, default):
     """Return one finite VRML material value in the required 0..1 range."""
@@ -934,14 +946,14 @@ def _sample_coordinate_animations(
     return animations
 
 
-def _sample_diffuse_color_animations(
+def _sample_material_animations(
     scene,
     mesh_objects,
     frames,
     use_color,
     color_type,
 ):
-    """Sample diffuse colors for objects that export as one material Shape."""
+    """Sample changing material fields for one-material, one-Shape objects."""
     if len(frames) < 2 or not use_color or color_type != "MATERIAL":
         return {}
 
@@ -953,25 +965,38 @@ def _sample_diffuse_color_animations(
     if not candidates:
         return {}
 
-    samples = {id(obj): [] for obj, _material in candidates}
+    samples = {
+        id(obj): {field: [] for field in _VRML2_MATERIAL_DEFAULTS}
+        for obj, _material in candidates
+    }
     with _preserve_scene_frame(scene):
         for frame in frames:
             scene.frame_set(frame)
             for obj, material in candidates:
-                samples[id(obj)].append(
-                    _material_export_settings(material)["diffuse_color"]
-                )
+                settings = _material_export_settings(material)
+                for field, value in settings.items():
+                    samples[id(obj)][field].append(value)
 
     animations = {}
     for obj, _material in candidates:
-        colors = tuple(samples[id(obj)])
-        baseline = colors[0]
-        if any(
-            abs(component - baseline[axis]) > 1.0e-9
-            for color in colors[1:]
-            for axis, component in enumerate(color)
-        ):
-            animations[id(obj)] = colors
+        changing_fields = {}
+        object_samples = samples[id(obj)]
+        for field, values in object_samples.items():
+            if len(values) != len(frames):
+                continue
+            baseline = values[0]
+            if isinstance(baseline, tuple):
+                changed = any(
+                    abs(component - baseline[axis]) > 1.0e-9
+                    for value in values[1:]
+                    for axis, component in enumerate(value)
+                )
+            else:
+                changed = any(abs(value - baseline) > 1.0e-9 for value in values[1:])
+            if changed:
+                changing_fields[field] = tuple(values)
+        if changing_fields:
+            animations[id(obj)] = changing_fields
     return animations
 
 
@@ -1266,13 +1291,14 @@ def _write_transform_animations(
                 f"{animation['coordinate_name']}.set_point\n"
             )
 
-        if animation.get("has_diffuse_color", False):
-            color_decimals = _animation_decimal_places(
-                animation["diffuse_color_values"],
-                decimal_places,
-            )
+        for field, _label, vrml_field in _VRML2_ANIMATED_COLOR_FIELDS:
+            values = animation.get("material_channels", {}).get(field)
+            if values is None:
+                continue
+            color_decimals = _animation_decimal_places(values, decimal_places)
+            interpolator_name = animation["material_interpolator_names"][field]
             fw(
-                f"\nDEF {animation['color_interpolator_name']} "
+                f"\nDEF {interpolator_name} "
                 "ColorInterpolator {\n"
             )
             fw("\tkey [ ")
@@ -1280,7 +1306,7 @@ def _write_transform_animations(
                 fw(f"{_format_float(fraction, timing_decimals)} ")
             fw("]\n")
             fw("\tkeyValue [ ")
-            for color in animation["diffuse_color_values"]:
+            for color in values:
                 fw(
                     "%s %s %s "
                     % tuple(
@@ -1292,11 +1318,40 @@ def _write_transform_animations(
             fw("}\n")
             fw(
                 f"ROUTE AnimationClock.fraction_changed TO "
-                f"{animation['color_interpolator_name']}.set_fraction\n"
+                f"{interpolator_name}.set_fraction\n"
             )
             fw(
-                f"ROUTE {animation['color_interpolator_name']}.value_changed TO "
-                f"{animation['material_name']}.set_diffuseColor\n"
+                f"ROUTE {interpolator_name}.value_changed TO "
+                f"{animation['material_name']}.set_{vrml_field}\n"
+            )
+
+        for field, _label, vrml_field in _VRML2_ANIMATED_SCALAR_FIELDS:
+            values = animation.get("material_channels", {}).get(field)
+            if values is None:
+                continue
+            scalar_frames = tuple((value,) for value in values)
+            value_decimals = _animation_decimal_places(
+                scalar_frames,
+                decimal_places,
+            )
+            interpolator_name = animation["material_interpolator_names"][field]
+            fw(f"\nDEF {interpolator_name} ScalarInterpolator {{\n")
+            fw("\tkey [ ")
+            for fraction in animation["fractions"]:
+                fw(f"{_format_float(fraction, timing_decimals)} ")
+            fw("]\n")
+            fw("\tkeyValue [ ")
+            for value in values:
+                fw(f"{_format_float(value, value_decimals)} ")
+            fw("]\n")
+            fw("}\n")
+            fw(
+                f"ROUTE AnimationClock.fraction_changed TO "
+                f"{interpolator_name}.set_fraction\n"
+            )
+            fw(
+                f"ROUTE {interpolator_name}.value_changed TO "
+                f"{animation['material_name']}.set_{vrml_field}\n"
             )
 
         if not loop:
@@ -1962,7 +2017,7 @@ def save(
             use_color,
             color_type,
         )
-        diffuse_color_animations = _sample_diffuse_color_animations(
+        material_animations = _sample_material_animations(
             scene,
             mesh_objects,
             sampled_frames,
@@ -2001,8 +2056,8 @@ def save(
 
         for obj in mesh_objects:
             object_id = id(obj)
-            diffuse_color_values = diffuse_color_animations.get(object_id)
-            if diffuse_color_values is None:
+            material_channels = material_animations.get(object_id)
+            if material_channels is None:
                 continue
             animation = animations_by_id.get(object_id)
             if animation is None:
@@ -2013,8 +2068,8 @@ def save(
                 )
                 transform_animations.append(animation)
                 animations_by_id[object_id] = animation
-            animation["has_diffuse_color"] = True
-            animation["diffuse_color_values"] = diffuse_color_values
+            animation["has_material"] = True
+            animation["material_channels"] = material_channels
 
         for index, animation in enumerate(transform_animations, start=1):
             animation["transform_name"] = f"AnimatedTransform_{index}"
@@ -2024,10 +2079,20 @@ def save(
             animation["coordinate_name"] = f"AnimatedCoordinates_{index}"
             animation["coordinate_interpolator_name"] = f"CoordinateInterpolator_{index}"
             animation["material_name"] = f"AnimatedMaterial_{index}"
-            animation["color_interpolator_name"] = f"ColorInterpolator_{index}"
+            animation["material_interpolator_names"] = {
+                field: (
+                    f"ColorInterpolator_{index}"
+                    if field == "diffuse_color"
+                    else f"{label}Interpolator_{index}"
+                )
+                for field, label, _vrml_field in (
+                    _VRML2_ANIMATED_COLOR_FIELDS
+                    + _VRML2_ANIMATED_SCALAR_FIELDS
+                )
+            }
             animation["touch_name"] = f"AnimationTouch_{index}"
             animation.setdefault("has_coordinates", False)
-            animation.setdefault("has_diffuse_color", False)
+            animation.setdefault("has_material", False)
         fps_base = float(scene.render.fps_base)
         if fps_base <= 0.0:
             raise ValueError("Scene frame rate must be greater than zero")
@@ -2101,7 +2166,7 @@ def save(
                 ),
                 material_name=(
                     animation["material_name"]
-                    if animation is not None and animation["has_diffuse_color"]
+                    if animation is not None and animation["has_material"]
                     else None
                 ),
             )
@@ -2164,15 +2229,15 @@ def save(
             animation.get("has_coordinates", False)
             for animation in transform_animations
         )
-        diffuse_color_count = sum(
-            animation.get("has_diffuse_color", False)
+        material_count = sum(
+            animation.get("has_material", False)
             for animation in transform_animations
         )
         message += (
             f"; animated {len(transform_animations)} object transform(s)"
             f" ({location_count} location, {rotation_count} rotation, "
             f"{scale_count} scale, {deformation_count} deformation, "
-            f"{diffuse_color_count} diffuse color)"
+            f"{material_count} material)"
         )
     if wrz_path is not None:
         message += f"; created {os.path.basename(wrz_path)}"

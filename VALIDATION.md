@@ -35,7 +35,7 @@ blender --background --factory-startup --python tests/blender_location_animation
 ```
 
 This check covers object location, rotation, and scale; shape-key and Armature
-modifier coordinate animation; and diffuse material color animation.
+modifier coordinate animation; and all six VRML2 Material Studio animation fields.
 
 The export-correctness check needs Blender because it exercises the real
 `bpy_extras.io_utils.path_reference` resolution for every path mode, against an

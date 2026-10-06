@@ -2,6 +2,12 @@
 
 All notable changes to this maintained fork are recorded here.
 
+## 0.7.0-alpha.9 - 2026-10-05
+
+- Expanded VRML2 Material Studio animation to diffuse, emissive, and specular colors through `ColorInterpolator` nodes.
+- Added ambient intensity, shininess, and transparency animation through `ScalarInterpolator` nodes.
+- Added Blender integration coverage that independently keys and routes all six Material Studio fields.
+
 ## 0.7.0-alpha.8.1 - 2026-10-05
 
 - Fixed diffuse color animation authored in VRML2 Material Studio by sampling its live `vrml2_material.diffuse_color` property instead of its static custom-property snapshot.
