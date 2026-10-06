@@ -214,6 +214,22 @@ def main():
     ):
         studio_material.keyframe_insert(data_path=field, frame=25)
 
+    visibility_mesh = bpy.data.meshes.new("Visibility Animation Mesh")
+    visibility_mesh.from_pydata(
+        [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+        [],
+        [(0, 1, 2)],
+    )
+    visibility_obj = bpy.data.objects.new("Blinking Triangle", visibility_mesh)
+    scene.collection.objects.link(visibility_obj)
+    visibility_obj.location = (13.0, 0.0, 0.0)
+    visibility_obj.hide_render = False
+    visibility_obj.keyframe_insert(data_path="hide_render", frame=1)
+    visibility_obj.hide_render = True
+    visibility_obj.keyframe_insert(data_path="hide_render", frame=13)
+    visibility_obj.hide_render = False
+    visibility_obj.keyframe_insert(data_path="hide_render", frame=25)
+
     obj.location = (1.0, 2.0, 3.0)
     obj.rotation_mode = "XYZ"
     obj.rotation_euler = (0.0, 0.0, 0.5235987755982988)
@@ -250,20 +266,21 @@ def main():
             color_type="MATERIAL",
         )
         assert scene.frame_current == 7
-        assert animated.count("Shape {") == 6
+        assert animated.count("Shape {") == 7
         animated_transform_count = animated.count("DEF AnimatedTransform_")
-        assert animated_transform_count == 5, animated_transform_count
+        assert animated_transform_count == 6, animated_transform_count
         assert "DEF AnimatedTransform_1 Transform {" in animated
         assert "DEF AnimatedTransform_2 Transform {" in animated
         assert "DEF AnimatedTransform_3 Transform {" in animated
         assert "DEF AnimatedTransform_4 Transform {" in animated
         assert "DEF AnimatedTransform_5 Transform {" in animated
+        assert "DEF AnimatedTransform_6 Transform {" in animated
         assert "center 1 2 3" in animated
         assert "center -2 0 0" in animated
         assert "scaleOrientation 0 0 1 0.523599" in animated
         assert "DEF AnimationClock TimeSensor {" not in animated
-        assert animated.count("TimeSensor {") == 5
-        for index in range(1, 6):
+        assert animated.count("TimeSensor {") == 6
+        for index in range(1, 7):
             assert f"DEF AnimationClock_{index} TimeSensor {{" in animated
         assert "cycleInterval 1" in animated
         assert "loop FALSE" in animated
@@ -347,6 +364,21 @@ def main():
         assert (
             "ROUTE AnimationTouch_5.touchTime TO AnimationClock_5.set_startTime"
         ) in animated
+        assert "DEF VisibilitySwitch_6 Switch {" in animated
+        assert "whichChoice 0" in animated
+        assert "DEF VisibilityScript_6 Script {" in animated
+        assert "field MFInt32 keyValue [ 0 -1 0 ]" in animated
+        assert (
+            "ROUTE AnimationClock_6.fraction_changed TO "
+            "VisibilityScript_6.set_fraction"
+        ) in animated
+        assert (
+            "ROUTE VisibilityScript_6.choice_changed TO "
+            "VisibilitySwitch_6.set_whichChoice"
+        ) in animated
+        assert (
+            "ROUTE AnimationTouch_6.touchTime TO AnimationClock_6.set_startTime"
+        ) in animated
 
         looping = export(
             extension,
@@ -389,6 +421,7 @@ def main():
     bpy.data.armatures.remove(armature_data)
     bpy.data.meshes.remove(color_mesh)
     bpy.data.materials.remove(color_material)
+    bpy.data.meshes.remove(visibility_mesh)
     del bpy.types.Material.vrml2_material
     bpy.utils.unregister_class(TestVRML2MaterialProperties)
     print("Blender transform animation integration test passed.")

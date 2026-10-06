@@ -1000,6 +1000,25 @@ def _sample_material_animations(
     return animations
 
 
+def _sample_visibility_animations(scene, mesh_objects, frames):
+    """Sample Blender render visibility as discrete visible/hidden states."""
+    if len(frames) < 2:
+        return {}
+
+    samples = {id(obj): [] for obj in mesh_objects}
+    with _preserve_scene_frame(scene):
+        for frame in frames:
+            scene.frame_set(frame)
+            for obj in mesh_objects:
+                samples[id(obj)].append(not bool(obj.hide_render))
+
+    return {
+        object_id: tuple(values)
+        for object_id, values in samples.items()
+        if any(value != values[0] for value in values[1:])
+    }
+
+
 def _empty_object_animation(obj, fractions, frames):
     """Create a neutral animation record for non-transform animation channels."""
     return {
@@ -1366,6 +1385,36 @@ def _write_transform_animations(
             fw(
                 f"ROUTE {interpolator_name}.value_changed TO "
                 f"{animation['material_name']}.set_{vrml_field}\n"
+            )
+
+        if animation.get("has_visibility", False):
+            fw(f"\nDEF {animation['visibility_script_name']} Script {{\n")
+            fw("\teventIn SFFloat set_fraction\n")
+            fw("\teventOut SFInt32 choice_changed\n")
+            fw("\tfield MFFloat key [ ")
+            for fraction in animation["fractions"]:
+                fw(f"{_format_float(fraction, timing_decimals)} ")
+            fw("]\n")
+            fw("\tfield MFInt32 keyValue [ ")
+            for visible in animation["visibility_values"]:
+                fw("0 " if visible else "-1 ")
+            fw("]\n")
+            script = (
+                "javascript:function set_fraction(value) { "
+                "var selected = keyValue[0]; "
+                "for (var i = 1; i < key.length; i++) { "
+                "if (value < key[i]) break; selected = keyValue[i]; } "
+                "choice_changed = selected; }"
+            )
+            fw(f"\turl [ {_vrml_quote(script)} ]\n")
+            fw("}\n")
+            fw(
+                f"ROUTE {clock_name}.fraction_changed TO "
+                f"{animation['visibility_script_name']}.set_fraction\n"
+            )
+            fw(
+                f"ROUTE {animation['visibility_script_name']}.choice_changed TO "
+                f"{animation['visibility_switch_name']}.set_whichChoice\n"
             )
 
         if not loop:
@@ -2038,6 +2087,11 @@ def save(
             use_color,
             color_type,
         )
+        visibility_animations = _sample_visibility_animations(
+            scene,
+            mesh_objects,
+            sampled_frames,
+        )
         animations_by_id = {
             id(animation["object"]): animation
             for animation in transform_animations
@@ -2085,6 +2139,23 @@ def save(
             animation["has_material"] = True
             animation["material_channels"] = material_channels
 
+        for obj in mesh_objects:
+            object_id = id(obj)
+            visibility_values = visibility_animations.get(object_id)
+            if visibility_values is None:
+                continue
+            animation = animations_by_id.get(object_id)
+            if animation is None:
+                animation = _empty_object_animation(
+                    obj,
+                    fractions,
+                    sampled_frames,
+                )
+                transform_animations.append(animation)
+                animations_by_id[object_id] = animation
+            animation["has_visibility"] = True
+            animation["visibility_values"] = visibility_values
+
         for index, animation in enumerate(transform_animations, start=1):
             animation["transform_name"] = f"AnimatedTransform_{index}"
             animation["location_interpolator_name"] = f"LocationInterpolator_{index}"
@@ -2106,8 +2177,11 @@ def save(
             }
             animation["clock_name"] = f"AnimationClock_{index}"
             animation["touch_name"] = f"AnimationTouch_{index}"
+            animation["visibility_switch_name"] = f"VisibilitySwitch_{index}"
+            animation["visibility_script_name"] = f"VisibilityScript_{index}"
             animation.setdefault("has_coordinates", False)
             animation.setdefault("has_material", False)
+            animation.setdefault("has_visibility", False)
         fps_base = float(scene.render.fps_base)
         if fps_base <= 0.0:
             raise ValueError("Scene frame rate must be greater than zero")
@@ -2204,7 +2278,18 @@ def save(
                         )
                     )
                 fw("\tchildren [\n")
-                fw(_indent_block(object_buffer.getvalue(), "\t\t"))
+                if animation["has_visibility"]:
+                    initial_choice = 0 if animation["visibility_values"][0] else -1
+                    fw(
+                        f"\t\tDEF {animation['visibility_switch_name']} Switch {{\n"
+                    )
+                    fw(f"\t\t\twhichChoice {initial_choice}\n")
+                    fw("\t\t\tchoice [\n")
+                    fw(_indent_block(object_buffer.getvalue(), "\t\t\t\t"))
+                    fw("\t\t\t]\n")
+                    fw("\t\t}\n")
+                else:
+                    fw(_indent_block(object_buffer.getvalue(), "\t\t"))
                 if not animation_loop:
                     fw(f"\t\tDEF {animation['touch_name']} TouchSensor {{ }}\n")
                 fw("\t]\n")
@@ -2248,11 +2333,15 @@ def save(
             animation.get("has_material", False)
             for animation in transform_animations
         )
+        visibility_count = sum(
+            animation.get("has_visibility", False)
+            for animation in transform_animations
+        )
         message += (
             f"; animated {len(transform_animations)} object transform(s)"
             f" ({location_count} location, {rotation_count} rotation, "
             f"{scale_count} scale, {deformation_count} deformation, "
-            f"{material_count} material)"
+            f"{material_count} material, {visibility_count} visibility)"
         )
     if wrz_path is not None:
         message += f"; created {os.path.basename(wrz_path)}"

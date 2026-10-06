@@ -2,6 +2,12 @@
 
 All notable changes to this maintained fork are recorded here.
 
+## 0.7.0-alpha.11 - 2026-10-06
+
+- Added sampled Blender render-visibility animation through VRML `Switch` nodes and standard VRML97 ECMAScript routing.
+- Kept visibility on each object's independent click clock in non-looping mode and on the shared clock in looping mode.
+- Added Blender integration coverage for a visible-to-hidden-to-visible object.
+
 ## 0.7.0-alpha.10 - 2026-10-05
 
 - Gave every non-looping animated object its own VRML `TimeSensor` so clicking one object no longer starts every animation in the scene.
