@@ -39,6 +39,9 @@ modifier coordinate animation; all six VRML2 Material Studio animation fields;
 independent non-looping click clocks for multiple objects; and discrete render
 visibility animation.
 
+The coordinate-animation coverage also combines an animated Displace modifier
+with Material Studio animation on the same object.
+
 The export-correctness check needs Blender because it exercises the real
 `bpy_extras.io_utils.path_reference` resolution for every path mode, against an
 absolute texture outside the export directory, an absolute texture inside it, and

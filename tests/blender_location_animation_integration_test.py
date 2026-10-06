@@ -214,6 +214,12 @@ def main():
     ):
         studio_material.keyframe_insert(data_path=field, frame=25)
 
+    displace_modifier = color_obj.modifiers.new("Animated Displace", "DISPLACE")
+    displace_modifier.strength = 0.0
+    displace_modifier.keyframe_insert(data_path="strength", frame=1)
+    displace_modifier.strength = 1.0
+    displace_modifier.keyframe_insert(data_path="strength", frame=25)
+
     visibility_mesh = bpy.data.meshes.new("Visibility Animation Mesh")
     visibility_mesh.from_pydata(
         [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
@@ -336,6 +342,12 @@ def main():
             "AnimatedCoordinates_4.set_point"
         ) in animated
         assert "material DEF AnimatedMaterial_5 Material {" in animated
+        assert "coord DEF AnimatedCoordinates_5 Coordinate {" in animated
+        assert "DEF CoordinateInterpolator_5 CoordinateInterpolator {" in animated
+        assert (
+            "ROUTE CoordinateInterpolator_5.value_changed TO "
+            "AnimatedCoordinates_5.set_point"
+        ) in animated
         assert "DEF ColorInterpolator_5 ColorInterpolator {" in animated
         assert "keyValue [ 1 0 0" in animated
         assert (

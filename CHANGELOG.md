@@ -2,6 +2,12 @@
 
 All notable changes to this maintained fork are recorded here.
 
+## 0.7.0-alpha.12 - 2026-10-06
+
+- Expanded sampled coordinate animation from shape keys and armatures to any enabled Blender modifier whose evaluated vertex count remains stable.
+- Added coverage for simultaneous animated Displace deformation and all six Material Studio fields on one object and one clock.
+- Continued skipping incompatible topology-changing deformation instead of exporting mismatched coordinate arrays.
+
 ## 0.7.0-alpha.11 - 2026-10-06
 
 - Added sampled Blender render-visibility animation through VRML `Switch` nodes and standard VRML97 ECMAScript routing.

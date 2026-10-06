@@ -864,13 +864,9 @@ def _evaluated_animation_points(obj, base_matrix):
         obj_eval.to_mesh_clear()
 
 
-def _has_enabled_armature_modifier(obj):
-    """Return whether an object has an enabled Armature modifier."""
-    return any(
-        modifier.type == "ARMATURE"
-        and modifier.show_viewport
-        for modifier in obj.modifiers
-    )
+def _has_enabled_mesh_modifier(obj):
+    """Return whether an object has a modifier enabled for evaluation."""
+    return any(modifier.show_viewport for modifier in obj.modifiers)
 
 
 def _sample_coordinate_animations(
@@ -891,7 +887,7 @@ def _sample_coordinate_animations(
         for obj in mesh_objects
         if (
             getattr(obj.data, "shape_keys", None) is not None
-            or _has_enabled_armature_modifier(obj)
+            or _has_enabled_mesh_modifier(obj)
         )
         and not _object_needs_split_material_shapes(obj, use_color, color_type)
     ]
