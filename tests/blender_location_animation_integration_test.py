@@ -236,6 +236,41 @@ def main():
     visibility_obj.hide_render = False
     visibility_obj.keyframe_insert(data_path="hide_render", frame=25)
 
+    multi_mesh = bpy.data.meshes.new("Multi Material Animation Mesh")
+    multi_mesh.from_pydata(
+        [
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (1.0, 1.0, 0.0),
+        ],
+        [],
+        [(0, 1, 2), (1, 3, 2)],
+    )
+    multi_obj = bpy.data.objects.new("Two Material Plane", multi_mesh)
+    scene.collection.objects.link(multi_obj)
+    multi_obj.location = (16.0, 0.0, 0.0)
+    multi_material_a = bpy.data.materials.new("Animated Material Slot A")
+    multi_material_b = bpy.data.materials.new("Animated Material Slot B")
+    multi_mesh.materials.append(multi_material_a)
+    multi_mesh.materials.append(multi_material_b)
+    multi_mesh.polygons[0].material_index = 0
+    multi_mesh.polygons[1].material_index = 1
+    for material in (multi_material_a, multi_material_b):
+        properties = material.vrml2_material
+        properties.initialized = True
+        properties.enabled = True
+    multi_properties_a = multi_material_a.vrml2_material
+    multi_properties_a.diffuse_color = (1.0, 0.0, 0.0)
+    multi_properties_a.keyframe_insert(data_path="diffuse_color", frame=1)
+    multi_properties_a.diffuse_color = (0.0, 1.0, 0.0)
+    multi_properties_a.keyframe_insert(data_path="diffuse_color", frame=25)
+    multi_properties_b = multi_material_b.vrml2_material
+    multi_properties_b.transparency = 0.0
+    multi_properties_b.keyframe_insert(data_path="transparency", frame=1)
+    multi_properties_b.transparency = 0.8
+    multi_properties_b.keyframe_insert(data_path="transparency", frame=25)
+
     obj.location = (1.0, 2.0, 3.0)
     obj.rotation_mode = "XYZ"
     obj.rotation_euler = (0.0, 0.0, 0.5235987755982988)
@@ -272,21 +307,22 @@ def main():
             color_type="MATERIAL",
         )
         assert scene.frame_current == 7
-        assert animated.count("Shape {") == 7
+        assert animated.count("Shape {") == 9
         animated_transform_count = animated.count("DEF AnimatedTransform_")
-        assert animated_transform_count == 6, animated_transform_count
+        assert animated_transform_count == 7, animated_transform_count
         assert "DEF AnimatedTransform_1 Transform {" in animated
         assert "DEF AnimatedTransform_2 Transform {" in animated
         assert "DEF AnimatedTransform_3 Transform {" in animated
         assert "DEF AnimatedTransform_4 Transform {" in animated
         assert "DEF AnimatedTransform_5 Transform {" in animated
         assert "DEF AnimatedTransform_6 Transform {" in animated
+        assert "DEF AnimatedTransform_7 Transform {" in animated
         assert "center 1 2 3" in animated
         assert "center -2 0 0" in animated
         assert "scaleOrientation 0 0 1 0.523599" in animated
         assert "DEF AnimationClock TimeSensor {" not in animated
-        assert animated.count("TimeSensor {") == 6
-        for index in range(1, 7):
+        assert animated.count("TimeSensor {") == 7
+        for index in range(1, 8):
             assert f"DEF AnimationClock_{index} TimeSensor {{" in animated
         assert "cycleInterval 1" in animated
         assert "loop FALSE" in animated
@@ -376,20 +412,32 @@ def main():
         assert (
             "ROUTE AnimationTouch_5.touchTime TO AnimationClock_5.set_startTime"
         ) in animated
-        assert "DEF VisibilitySwitch_6 Switch {" in animated
+        assert "material DEF AnimatedMaterial_6_1 Material {" in animated
+        assert "material DEF AnimatedMaterial_6_2 Material {" in animated
+        assert "DEF ColorInterpolator_6_1 ColorInterpolator {" in animated
+        assert "DEF TransparencyInterpolator_6_2 ScalarInterpolator {" in animated
+        assert (
+            "ROUTE ColorInterpolator_6_1.value_changed TO "
+            "AnimatedMaterial_6_1.set_diffuseColor"
+        ) in animated
+        assert (
+            "ROUTE TransparencyInterpolator_6_2.value_changed TO "
+            "AnimatedMaterial_6_2.set_transparency"
+        ) in animated
+        assert "DEF VisibilitySwitch_7 Switch {" in animated
         assert "whichChoice 0" in animated
-        assert "DEF VisibilityScript_6 Script {" in animated
+        assert "DEF VisibilityScript_7 Script {" in animated
         assert "field MFInt32 keyValue [ 0 -1 0 ]" in animated
         assert (
-            "ROUTE AnimationClock_6.fraction_changed TO "
-            "VisibilityScript_6.set_fraction"
+            "ROUTE AnimationClock_7.fraction_changed TO "
+            "VisibilityScript_7.set_fraction"
         ) in animated
         assert (
-            "ROUTE VisibilityScript_6.choice_changed TO "
-            "VisibilitySwitch_6.set_whichChoice"
+            "ROUTE VisibilityScript_7.choice_changed TO "
+            "VisibilitySwitch_7.set_whichChoice"
         ) in animated
         assert (
-            "ROUTE AnimationTouch_6.touchTime TO AnimationClock_6.set_startTime"
+            "ROUTE AnimationTouch_7.touchTime TO AnimationClock_7.set_startTime"
         ) in animated
 
         looping = export(
@@ -434,6 +482,9 @@ def main():
     bpy.data.meshes.remove(color_mesh)
     bpy.data.materials.remove(color_material)
     bpy.data.meshes.remove(visibility_mesh)
+    bpy.data.meshes.remove(multi_mesh)
+    bpy.data.materials.remove(multi_material_a)
+    bpy.data.materials.remove(multi_material_b)
     del bpy.types.Material.vrml2_material
     bpy.utils.unregister_class(TestVRML2MaterialProperties)
     print("Blender transform animation integration test passed.")

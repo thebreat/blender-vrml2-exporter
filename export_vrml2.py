@@ -949,50 +949,80 @@ def _sample_material_animations(
     use_color,
     color_type,
 ):
-    """Sample changing material fields for one-material, one-Shape objects."""
+    """Sample changing fields for exported Material nodes by material slot."""
     if len(frames) < 2 or not use_color or color_type != "MATERIAL":
         return {}
 
     candidates = []
     for obj in mesh_objects:
         materials = [slot.material for slot in obj.material_slots]
-        if len(materials) == 1 and materials[0] is not None:
-            candidates.append((obj, materials[0]))
+        if not materials:
+            continue
+        used_indices = sorted(
+            {
+                min(max(int(polygon.material_index), 0), len(materials) - 1)
+                for polygon in obj.data.polygons
+            }
+        )
+        if len(materials) > 1 and not _object_needs_split_material_shapes(
+            obj,
+            use_color,
+            color_type,
+        ):
+            continue
+        used_materials = [
+            (index, materials[index])
+            for index in used_indices
+            if materials[index] is not None
+        ]
+        if used_materials:
+            candidates.append((obj, used_materials))
     if not candidates:
         return {}
 
     samples = {
-        id(obj): {field: [] for field in _VRML2_MATERIAL_DEFAULTS}
-        for obj, _material in candidates
+        id(obj): {
+            material_index: {field: [] for field in _VRML2_MATERIAL_DEFAULTS}
+            for material_index, _material in used_materials
+        }
+        for obj, used_materials in candidates
     }
     with _preserve_scene_frame(scene):
         for frame in frames:
             scene.frame_set(frame)
-            for obj, material in candidates:
-                settings = _material_export_settings(material)
-                for field, value in settings.items():
-                    samples[id(obj)][field].append(value)
+            for obj, used_materials in candidates:
+                for material_index, material in used_materials:
+                    settings = _material_export_settings(material)
+                    for field, value in settings.items():
+                        samples[id(obj)][material_index][field].append(value)
 
     animations = {}
-    for obj, _material in candidates:
-        changing_fields = {}
-        object_samples = samples[id(obj)]
-        for field, values in object_samples.items():
-            if len(values) != len(frames):
-                continue
-            baseline = values[0]
-            if isinstance(baseline, tuple):
-                changed = any(
-                    abs(component - baseline[axis]) > 1.0e-9
-                    for value in values[1:]
-                    for axis, component in enumerate(value)
-                )
-            else:
-                changed = any(abs(value - baseline) > 1.0e-9 for value in values[1:])
-            if changed:
-                changing_fields[field] = tuple(values)
-        if changing_fields:
-            animations[id(obj)] = changing_fields
+    for obj, used_materials in candidates:
+        changing_materials = {}
+        for material_index, _material in used_materials:
+            changing_fields = {}
+            material_samples = samples[id(obj)][material_index]
+            for field, values in material_samples.items():
+                if len(values) != len(frames):
+                    continue
+                baseline = values[0]
+                if isinstance(baseline, tuple):
+                    changed = any(
+                        abs(component - baseline[axis]) > 1.0e-9
+                        for value in values[1:]
+                        for axis, component in enumerate(value)
+                    )
+                else:
+                    changed = any(
+                        abs(value - baseline) > 1.0e-9
+                        for value in values[1:]
+                    )
+                if changed:
+                    changing_fields[field] = tuple(values)
+            if changing_fields:
+                changing_materials[material_index] = changing_fields
+        if changing_materials:
+            animations[id(obj)] = changing_materials
     return animations
 
 
@@ -1320,68 +1350,71 @@ def _write_transform_animations(
                 f"{animation['coordinate_name']}.set_point\n"
             )
 
-        for field, _label, vrml_field in _VRML2_ANIMATED_COLOR_FIELDS:
-            values = animation.get("material_channels", {}).get(field)
-            if values is None:
-                continue
-            color_decimals = _animation_decimal_places(values, decimal_places)
-            interpolator_name = animation["material_interpolator_names"][field]
-            fw(
-                f"\nDEF {interpolator_name} "
-                "ColorInterpolator {\n"
-            )
-            fw("\tkey [ ")
-            for fraction in animation["fractions"]:
-                fw(f"{_format_float(fraction, timing_decimals)} ")
-            fw("]\n")
-            fw("\tkeyValue [ ")
-            for color in values:
-                fw(
-                    "%s %s %s "
-                    % tuple(
-                        _format_float(component, color_decimals)
-                        for component in color
+        for material_index, channels in animation.get(
+            "material_channels_by_index",
+            {},
+        ).items():
+            material_name = animation["material_names"][material_index]
+            interpolator_names = animation["material_interpolator_names"][material_index]
+            for field, _label, vrml_field in _VRML2_ANIMATED_COLOR_FIELDS:
+                values = channels.get(field)
+                if values is None:
+                    continue
+                color_decimals = _animation_decimal_places(values, decimal_places)
+                interpolator_name = interpolator_names[field]
+                fw(f"\nDEF {interpolator_name} ColorInterpolator {{\n")
+                fw("\tkey [ ")
+                for fraction in animation["fractions"]:
+                    fw(f"{_format_float(fraction, timing_decimals)} ")
+                fw("]\n")
+                fw("\tkeyValue [ ")
+                for color in values:
+                    fw(
+                        "%s %s %s "
+                        % tuple(
+                            _format_float(component, color_decimals)
+                            for component in color
+                        )
                     )
+                fw("]\n")
+                fw("}\n")
+                fw(
+                    f"ROUTE {clock_name}.fraction_changed TO "
+                    f"{interpolator_name}.set_fraction\n"
                 )
-            fw("]\n")
-            fw("}\n")
-            fw(
-                f"ROUTE {clock_name}.fraction_changed TO "
-                f"{interpolator_name}.set_fraction\n"
-            )
-            fw(
-                f"ROUTE {interpolator_name}.value_changed TO "
-                f"{animation['material_name']}.set_{vrml_field}\n"
-            )
+                fw(
+                    f"ROUTE {interpolator_name}.value_changed TO "
+                    f"{material_name}.set_{vrml_field}\n"
+                )
 
-        for field, _label, vrml_field in _VRML2_ANIMATED_SCALAR_FIELDS:
-            values = animation.get("material_channels", {}).get(field)
-            if values is None:
-                continue
-            scalar_frames = tuple((value,) for value in values)
-            value_decimals = _animation_decimal_places(
-                scalar_frames,
-                decimal_places,
-            )
-            interpolator_name = animation["material_interpolator_names"][field]
-            fw(f"\nDEF {interpolator_name} ScalarInterpolator {{\n")
-            fw("\tkey [ ")
-            for fraction in animation["fractions"]:
-                fw(f"{_format_float(fraction, timing_decimals)} ")
-            fw("]\n")
-            fw("\tkeyValue [ ")
-            for value in values:
-                fw(f"{_format_float(value, value_decimals)} ")
-            fw("]\n")
-            fw("}\n")
-            fw(
-                f"ROUTE {clock_name}.fraction_changed TO "
-                f"{interpolator_name}.set_fraction\n"
-            )
-            fw(
-                f"ROUTE {interpolator_name}.value_changed TO "
-                f"{animation['material_name']}.set_{vrml_field}\n"
-            )
+            for field, _label, vrml_field in _VRML2_ANIMATED_SCALAR_FIELDS:
+                values = channels.get(field)
+                if values is None:
+                    continue
+                scalar_frames = tuple((value,) for value in values)
+                value_decimals = _animation_decimal_places(
+                    scalar_frames,
+                    decimal_places,
+                )
+                interpolator_name = interpolator_names[field]
+                fw(f"\nDEF {interpolator_name} ScalarInterpolator {{\n")
+                fw("\tkey [ ")
+                for fraction in animation["fractions"]:
+                    fw(f"{_format_float(fraction, timing_decimals)} ")
+                fw("]\n")
+                fw("\tkeyValue [ ")
+                for value in values:
+                    fw(f"{_format_float(value, value_decimals)} ")
+                fw("]\n")
+                fw("}\n")
+                fw(
+                    f"ROUTE {clock_name}.fraction_changed TO "
+                    f"{interpolator_name}.set_fraction\n"
+                )
+                fw(
+                    f"ROUTE {interpolator_name}.value_changed TO "
+                    f"{material_name}.set_{vrml_field}\n"
+                )
 
         if animation.get("has_visibility", False):
             fw(f"\nDEF {animation['visibility_script_name']} Script {{\n")
@@ -1827,6 +1860,7 @@ def save_object(
     two_sided_faces=False,
     coordinate_name=None,
     material_name=None,
+    material_names=None,
 ):
     """Evaluate and export a single mesh object."""
     if obj.type != "MESH":
@@ -1971,6 +2005,7 @@ def save_object(
                         [material_settings[material_index]],
                         two_sided_faces,
                         None,
+                        material_names.get(material_index) if material_names else None,
                     )
                 finally:
                     subset.free()
@@ -1997,7 +2032,10 @@ def save_object(
                 material_settings,
                 two_sided_faces,
                 coordinate_name,
-                material_name,
+                (
+                    material_name
+                    or (material_names.get(0) if material_names else None)
+                ),
             )
         if transform is not None:
             fw("\t]\n")
@@ -2120,8 +2158,8 @@ def save(
 
         for obj in mesh_objects:
             object_id = id(obj)
-            material_channels = material_animations.get(object_id)
-            if material_channels is None:
+            material_channels_by_index = material_animations.get(object_id)
+            if material_channels_by_index is None:
                 continue
             animation = animations_by_id.get(object_id)
             if animation is None:
@@ -2133,7 +2171,7 @@ def save(
                 transform_animations.append(animation)
                 animations_by_id[object_id] = animation
             animation["has_material"] = True
-            animation["material_channels"] = material_channels
+            animation["material_channels_by_index"] = material_channels_by_index
 
         for obj in mesh_objects:
             object_id = id(obj)
@@ -2159,18 +2197,28 @@ def save(
             animation["scale_interpolator_name"] = f"ScaleInterpolator_{index}"
             animation["coordinate_name"] = f"AnimatedCoordinates_{index}"
             animation["coordinate_interpolator_name"] = f"CoordinateInterpolator_{index}"
-            animation["material_name"] = f"AnimatedMaterial_{index}"
-            animation["material_interpolator_names"] = {
-                field: (
-                    f"ColorInterpolator_{index}"
-                    if field == "diffuse_color"
-                    else f"{label}Interpolator_{index}"
+            material_indices = sorted(
+                animation.get("material_channels_by_index", {})
+            )
+            multiple_materials = len(material_indices) > 1
+            animation["material_names"] = {}
+            animation["material_interpolator_names"] = {}
+            for material_index in material_indices:
+                suffix = f"_{material_index + 1}" if multiple_materials else ""
+                animation["material_names"][material_index] = (
+                    f"AnimatedMaterial_{index}{suffix}"
                 )
-                for field, label, _vrml_field in (
-                    _VRML2_ANIMATED_COLOR_FIELDS
-                    + _VRML2_ANIMATED_SCALAR_FIELDS
-                )
-            }
+                animation["material_interpolator_names"][material_index] = {
+                    field: (
+                        f"ColorInterpolator_{index}{suffix}"
+                        if field == "diffuse_color"
+                        else f"{label}Interpolator_{index}{suffix}"
+                    )
+                    for field, label, _vrml_field in (
+                        _VRML2_ANIMATED_COLOR_FIELDS
+                        + _VRML2_ANIMATED_SCALAR_FIELDS
+                    )
+                }
             animation["clock_name"] = f"AnimationClock_{index}"
             animation["touch_name"] = f"AnimationTouch_{index}"
             animation["visibility_switch_name"] = f"VisibilitySwitch_{index}"
@@ -2249,8 +2297,8 @@ def save(
                     if animation is not None and animation["has_coordinates"]
                     else None
                 ),
-                material_name=(
-                    animation["material_name"]
+                material_names=(
+                    animation["material_names"]
                     if animation is not None and animation["has_material"]
                     else None
                 ),

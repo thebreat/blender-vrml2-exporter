@@ -2,6 +2,12 @@
 
 All notable changes to this maintained fork are recorded here.
 
+## 0.7.0-alpha.13 - 2026-10-06
+
+- Added independent Material Studio animation for multiple material slots on one mesh object.
+- Routed every animated material field to the correct per-slot VRML Material while keeping one object clock and click target.
+- Added Blender integration coverage for simultaneous diffuse-color and transparency animation on two face regions.
+
 ## 0.7.0-alpha.12 - 2026-10-06
 
 - Expanded sampled coordinate animation from shape keys and armatures to any enabled Blender modifier whose evaluated vertex count remains stable.
