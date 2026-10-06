@@ -173,14 +173,14 @@ writer._write_transform_animations(
     3,
 )
 animation_content = animation_buffer.getvalue()
-assert 'DEF AnimationClock TimeSensor {' in animation_content
+assert 'DEF AnimationClock_1 TimeSensor {' in animation_content
 assert 'cycleInterval 1' in animation_content
 assert '\tloop FALSE' in animation_content
 assert '\tstartTime -1' in animation_content
 assert '\tkey [ 0 0.5 1 ]' in animation_content
 assert '\tkeyValue [ 0 0 0 1 0 0 2 0 0 ]' in animation_content
 assert (
-    'ROUTE AnimationClock.fraction_changed TO LocationInterpolator_1.set_fraction'
+    'ROUTE AnimationClock_1.fraction_changed TO LocationInterpolator_1.set_fraction'
     in animation_content
 )
 assert (
@@ -191,7 +191,7 @@ assert (
 assert 'DEF RotationInterpolator_1 OrientationInterpolator {' in animation_content
 assert 'keyValue [ 0 0 1 0 0 0 1 0.785 0 0 1 1.571 ]' in animation_content
 assert (
-    'ROUTE AnimationClock.fraction_changed TO RotationInterpolator_1.set_fraction'
+    'ROUTE AnimationClock_1.fraction_changed TO RotationInterpolator_1.set_fraction'
     in animation_content
 )
 assert (
@@ -211,11 +211,11 @@ assert (
     in animation_content
 )
 assert (
-    'ROUTE AnimationTouch_1.touchTime TO AnimationClock.set_startTime'
+    'ROUTE AnimationTouch_1.touchTime TO AnimationClock_1.set_startTime'
     in animation_content
 )
 assert animation_content.count(
-    'ROUTE AnimationTouch_1.touchTime TO AnimationClock.set_startTime'
+    'ROUTE AnimationTouch_1.touchTime TO AnimationClock_1.set_startTime'
 ) == 1
 assert writer._animation_decimal_places(
     ((0.0, 0.0, 0.0), (0.4, 0.0, 0.0), (0.8, 0.0, 0.0)),

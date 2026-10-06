@@ -1145,25 +1145,39 @@ def _write_transform_animations(
     loop,
     decimal_places,
 ):
-    """Write one clock plus the needed transform interpolators and routes."""
+    """Write shared looping or independent clickable animation clocks."""
     if not animations:
         return
 
     timing_decimals = max(decimal_places, 6)
     fw("\n# Transform animation\n")
-    fw("DEF AnimationClock TimeSensor {\n")
-    fw(
-        "\tcycleInterval %s\n"
-        % _format_float(cycle_interval, timing_decimals)
-    )
-    fw(f"\tloop {'TRUE' if loop else 'FALSE'}\n")
-    if not loop:
-        # A negative start time is already expired when the world loads. The
-        # TouchSensor ROUTE replaces it with the click time to begin playback.
-        fw("\tstartTime -1\n")
-    fw("}\n")
+    if loop:
+        fw("DEF AnimationClock TimeSensor {\n")
+        fw(
+            "\tcycleInterval %s\n"
+            % _format_float(cycle_interval, timing_decimals)
+        )
+        fw("\tloop TRUE\n")
+        fw("}\n")
 
-    for animation in animations:
+    for animation_index, animation in enumerate(animations, start=1):
+        clock_name = (
+            "AnimationClock"
+            if loop
+            else animation.get("clock_name", f"AnimationClock_{animation_index}")
+        )
+        if not loop:
+            fw(f"\nDEF {clock_name} TimeSensor {{\n")
+            fw(
+                "\tcycleInterval %s\n"
+                % _format_float(cycle_interval, timing_decimals)
+            )
+            fw("\tloop FALSE\n")
+            # A negative start time is already expired when the world loads.
+            # This object's TouchSensor supplies its own click time.
+            fw("\tstartTime -1\n")
+            fw("}\n")
+
         if animation["has_translation"]:
             value_decimals = _animation_decimal_places(
                 animation["translation_deltas"],
@@ -1189,7 +1203,7 @@ def _write_transform_animations(
             fw("]\n")
             fw("}\n")
             fw(
-                f"ROUTE AnimationClock.fraction_changed TO "
+                f"ROUTE {clock_name}.fraction_changed TO "
                 f"{animation['location_interpolator_name']}.set_fraction\n"
             )
             fw(
@@ -1222,7 +1236,7 @@ def _write_transform_animations(
             fw("]\n")
             fw("}\n")
             fw(
-                f"ROUTE AnimationClock.fraction_changed TO "
+                f"ROUTE {clock_name}.fraction_changed TO "
                 f"{animation['rotation_interpolator_name']}.set_fraction\n"
             )
             fw(
@@ -1255,7 +1269,7 @@ def _write_transform_animations(
             fw("]\n")
             fw("}\n")
             fw(
-                f"ROUTE AnimationClock.fraction_changed TO "
+                f"ROUTE {clock_name}.fraction_changed TO "
                 f"{animation['scale_interpolator_name']}.set_fraction\n"
             )
             fw(
@@ -1283,7 +1297,7 @@ def _write_transform_animations(
             fw("]\n")
             fw("}\n")
             fw(
-                f"ROUTE AnimationClock.fraction_changed TO "
+                f"ROUTE {clock_name}.fraction_changed TO "
                 f"{animation['coordinate_interpolator_name']}.set_fraction\n"
             )
             fw(
@@ -1317,7 +1331,7 @@ def _write_transform_animations(
             fw("]\n")
             fw("}\n")
             fw(
-                f"ROUTE AnimationClock.fraction_changed TO "
+                f"ROUTE {clock_name}.fraction_changed TO "
                 f"{interpolator_name}.set_fraction\n"
             )
             fw(
@@ -1346,7 +1360,7 @@ def _write_transform_animations(
             fw("]\n")
             fw("}\n")
             fw(
-                f"ROUTE AnimationClock.fraction_changed TO "
+                f"ROUTE {clock_name}.fraction_changed TO "
                 f"{interpolator_name}.set_fraction\n"
             )
             fw(
@@ -1357,7 +1371,7 @@ def _write_transform_animations(
         if not loop:
             fw(
                 f"ROUTE {animation['touch_name']}.touchTime TO "
-                "AnimationClock.set_startTime\n"
+                f"{clock_name}.set_startTime\n"
             )
 
 
@@ -2090,6 +2104,7 @@ def save(
                     + _VRML2_ANIMATED_SCALAR_FIELDS
                 )
             }
+            animation["clock_name"] = f"AnimationClock_{index}"
             animation["touch_name"] = f"AnimationTouch_{index}"
             animation.setdefault("has_coordinates", False)
             animation.setdefault("has_material", False)

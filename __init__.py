@@ -78,7 +78,7 @@ class ExportVRML(bpy.types.Operator, ExportHelper):
         name="Loop Animation",
         description=(
             "Repeat continuously and begin when the WRL opens; when disabled, "
-            "the animation stays stopped until an animated object is clicked"
+            "each animation stays stopped until its own object is clicked"
         ),
         default=False,
     )

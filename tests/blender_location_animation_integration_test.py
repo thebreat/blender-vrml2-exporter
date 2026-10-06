@@ -261,7 +261,10 @@ def main():
         assert "center 1 2 3" in animated
         assert "center -2 0 0" in animated
         assert "scaleOrientation 0 0 1 0.523599" in animated
-        assert "DEF AnimationClock TimeSensor {" in animated
+        assert "DEF AnimationClock TimeSensor {" not in animated
+        assert animated.count("TimeSensor {") == 5
+        for index in range(1, 6):
+            assert f"DEF AnimationClock_{index} TimeSensor {{" in animated
         assert "cycleInterval 1" in animated
         assert "loop FALSE" in animated
         assert "startTime -1" in animated
@@ -273,7 +276,7 @@ def main():
         assert "LocationInterpolator_2" not in animated
         assert "keyValue [ 0 0 1 0 0 0 1 0.785398 0 0 1 1.570796 ]" in animated
         assert (
-            "ROUTE AnimationClock.fraction_changed TO "
+            "ROUTE AnimationClock_1.fraction_changed TO "
             "LocationInterpolator_1.set_fraction"
         ) in animated
         assert (
@@ -281,7 +284,7 @@ def main():
             "AnimatedTransform_1.set_translation"
         ) in animated
         assert (
-            "ROUTE AnimationClock.fraction_changed TO "
+            "ROUTE AnimationClock_1.fraction_changed TO "
             "RotationInterpolator_1.set_fraction"
         ) in animated
         assert (
@@ -291,6 +294,10 @@ def main():
         assert (
             "ROUTE RotationInterpolator_2.value_changed TO "
             "AnimatedTransform_2.set_rotation"
+        ) in animated
+        assert (
+            "ROUTE AnimationClock_2.fraction_changed TO "
+            "RotationInterpolator_2.set_fraction"
         ) in animated
         assert "DEF ScaleInterpolator_1 PositionInterpolator {" in animated
         assert "ScaleInterpolator_2" not in animated
@@ -315,7 +322,7 @@ def main():
         assert "DEF ColorInterpolator_5 ColorInterpolator {" in animated
         assert "keyValue [ 1 0 0" in animated
         assert (
-            "ROUTE AnimationClock.fraction_changed TO "
+            "ROUTE AnimationClock_5.fraction_changed TO "
             "ColorInterpolator_5.set_fraction"
         ) in animated
         assert (
@@ -335,7 +342,10 @@ def main():
                 f"AnimatedMaterial_5.set_{vrml_field}"
             ) in animated
         assert (
-            "ROUTE AnimationTouch_1.touchTime TO AnimationClock.set_startTime"
+            "ROUTE AnimationTouch_1.touchTime TO AnimationClock_1.set_startTime"
+        ) in animated
+        assert (
+            "ROUTE AnimationTouch_5.touchTime TO AnimationClock_5.set_startTime"
         ) in animated
 
         looping = export(
@@ -350,6 +360,12 @@ def main():
             color_type="MATERIAL",
         )
         assert "loop TRUE" in looping
+        assert looping.count("DEF AnimationClock TimeSensor {") == 1
+        assert "AnimationClock_1" not in looping
+        assert (
+            "ROUTE AnimationClock.fraction_changed TO "
+            "LocationInterpolator_1.set_fraction"
+        ) in looping
         assert "startTime -1" not in looping
         assert "TouchSensor" not in looping
         assert ".touchTime" not in looping

@@ -2,6 +2,12 @@
 
 All notable changes to this maintained fork are recorded here.
 
+## 0.7.0-alpha.10 - 2026-10-05
+
+- Gave every non-looping animated object its own VRML `TimeSensor` so clicking one object no longer starts every animation in the scene.
+- Kept looping exports on one shared clock so synchronized ambient animation still starts automatically and repeats together.
+- Added multi-object Blender coverage for independent click clocks and their routes.
+
 ## 0.7.0-alpha.9 - 2026-10-05
 
 - Expanded VRML2 Material Studio animation to diffuse, emissive, and specular colors through `ColorInterpolator` nodes.
