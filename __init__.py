@@ -92,6 +92,15 @@ class ExportVRML(bpy.types.Operator, ExportHelper):
         default=False,
     )
 
+    animation_start_automatically: BoolProperty(
+        name="Start Automatically",
+        description=(
+            "Play a non-looping animation once when the WRL opens; it can "
+            "still be replayed by clicking afterward"
+        ),
+        default=False,
+    )
+
     animation_frame_step: IntProperty(
         name="Sample Every",
         description="Sample animated location, rotation, and scale every this many Blender frames",
@@ -262,6 +271,10 @@ class ExportVRML(bpy.types.Operator, ExportHelper):
         together_row = layout.row()
         together_row.active = self.export_animation and not self.animation_loop
         together_row.prop(self, "animation_play_together")
+
+        automatic_row = layout.row()
+        automatic_row.active = self.export_animation and not self.animation_loop
+        automatic_row.prop(self, "animation_start_automatically")
 
         frame_range_row = layout.row()
         frame_range_row.active = self.export_animation

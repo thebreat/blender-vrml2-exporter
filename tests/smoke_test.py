@@ -108,6 +108,7 @@ assert package.ExportVRML.__annotations__['two_sided_faces']['default'] is False
 assert package.ExportVRML.__annotations__['export_animation']['default'] is False
 assert package.ExportVRML.__annotations__['animation_loop']['default'] is False
 assert package.ExportVRML.__annotations__['animation_play_together']['default'] is False
+assert package.ExportVRML.__annotations__['animation_start_automatically']['default'] is False
 assert package.ExportVRML.__annotations__['animation_frame_step']['default'] == 1
 assert package.ExportVRML.__annotations__['decimal_places']['default'] == 6
 assert package.ExportVRML.__annotations__['deduplicate_uvs']['default'] is True
@@ -261,6 +262,30 @@ assert (
 assert shared_animation_content.count(
     'ROUTE AnimationClock.fraction_changed TO LocationInterpolator_'
 ) == 2
+
+# Automatic one-shot playback starts at world time zero but retains click
+# routes so the animation can be replayed after it finishes.
+automatic_animation_buffer = io.StringIO()
+writer._write_transform_animations(
+    automatic_animation_buffer.write,
+    shared_animations,
+    1.0,
+    False,
+    3,
+    False,
+    True,
+)
+automatic_animation_content = automatic_animation_buffer.getvalue()
+assert automatic_animation_content.count('\tstartTime 0') == 2
+assert '\tstartTime -1' not in automatic_animation_content
+assert (
+    'ROUTE AnimationTouch_1.touchTime TO AnimationClock_1.set_startTime'
+    in automatic_animation_content
+)
+assert (
+    'ROUTE AnimationTouch_2.touchTime TO AnimationClock_2.set_startTime'
+    in automatic_animation_content
+)
 assert writer._animation_decimal_places(
     ((0.0, 0.0, 0.0), (0.4, 0.0, 0.0), (0.8, 0.0, 0.0)),
     0,

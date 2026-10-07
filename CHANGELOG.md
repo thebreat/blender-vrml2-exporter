@@ -2,6 +2,12 @@
 
 All notable changes to this maintained fork are recorded here.
 
+## 0.7.0-alpha.15 - 2026-10-07
+
+- Added an optional **Start Automatically** setting for non-looping animation.
+- Allowed one-shot animations to play when the WRL opens and remain replayable by clicking afterward.
+- Preserved stopped-until-clicked playback as the default.
+
 ## 0.7.0-alpha.14 - 2026-10-06
 
 - Added an optional **Play Animations Together** export setting for synchronized click-to-play animation.

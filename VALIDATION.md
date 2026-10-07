@@ -36,8 +36,8 @@ blender --background --factory-startup --python tests/blender_location_animation
 
 This check covers object location, rotation, and scale; shape-key and Armature
 modifier coordinate animation; all six VRML2 Material Studio animation fields;
-independent and synchronized non-looping click clocks for multiple objects; and
-discrete render visibility animation.
+independent and synchronized non-looping click clocks for multiple objects;
+optional one-shot playback on load; and discrete render visibility animation.
 
 The coordinate-animation coverage also combines an animated Displace modifier
 with Material Studio animation on the same object.

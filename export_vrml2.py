@@ -1190,6 +1190,7 @@ def _write_transform_animations(
     loop,
     decimal_places,
     play_together=False,
+    start_automatically=False,
 ):
     """Write looping, shared-click, or independent animation clocks."""
     if not animations:
@@ -1206,7 +1207,7 @@ def _write_transform_animations(
         )
         fw(f"\tloop {'TRUE' if loop else 'FALSE'}\n")
         if not loop:
-            fw("\tstartTime -1\n")
+            fw(f"\tstartTime {0 if start_automatically else -1}\n")
         fw("}\n")
 
     for animation_index, animation in enumerate(animations, start=1):
@@ -1223,8 +1224,8 @@ def _write_transform_animations(
             )
             fw("\tloop FALSE\n")
             # A negative start time is already expired when the world loads.
-            # This object's TouchSensor supplies its own click time.
-            fw("\tstartTime -1\n")
+            # Zero starts once on load; the TouchSensor can replay it later.
+            fw(f"\tstartTime {0 if start_automatically else -1}\n")
             fw("}\n")
 
         if animation["has_translation"]:
@@ -2074,6 +2075,7 @@ def save(
     animation_loop=False,
     animation_frame_step=1,
     animation_play_together=False,
+    animation_start_automatically=False,
 ):
     """Export mesh objects from the current context to a VRML 2.0 file."""
     if global_matrix is None:
@@ -2351,6 +2353,7 @@ def save(
             animation_loop,
             decimal_places,
             animation_play_together,
+            animation_start_automatically,
         )
 
     if geometry_cache is not None:

@@ -296,6 +296,7 @@ def main():
         export_path = Path(temp) / "animation.wrl"
         looping_path = Path(temp) / "looping-animation.wrl"
         together_path = Path(temp) / "together-animation.wrl"
+        automatic_path = Path(temp) / "automatic-animation.wrl"
         static_path = Path(temp) / "static.wrl"
         animated = export(
             extension,
@@ -494,6 +495,30 @@ def main():
             "ROUTE AnimationClock.fraction_changed TO "
             "TransparencyInterpolator_6_2.set_fraction"
         ) in together
+
+        automatic = export(
+            extension,
+            automatic_path,
+            export_animation=True,
+            animation_loop=False,
+            animation_start_automatically=True,
+            animation_frame_step=12,
+            use_mesh_modifiers=True,
+            use_color=True,
+            color_type="MATERIAL",
+        )
+        assert automatic.count("TimeSensor {") == 7
+        assert automatic.count("startTime 0") == 7
+        assert "startTime -1" not in automatic
+        assert automatic.count("TouchSensor { }") == 7
+        assert (
+            "ROUTE AnimationTouch_1.touchTime TO "
+            "AnimationClock_1.set_startTime"
+        ) in automatic
+        assert (
+            "ROUTE AnimationTouch_7.touchTime TO "
+            "AnimationClock_7.set_startTime"
+        ) in automatic
 
         static = export(extension, static_path, export_animation=False)
         assert "TimeSensor" not in static
