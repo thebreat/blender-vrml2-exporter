@@ -833,8 +833,8 @@ def _object_needs_split_material_shapes(obj, use_color, color_type):
     return any(len(settings[index]) > 1 for index in used_indices)
 
 
-def _evaluated_animation_points(obj, base_matrix):
-    """Return evaluated, export-space points and topology for one scene frame."""
+def _evaluated_animation_points(obj, base_matrix, split_material_shapes=False):
+    """Return export-space points in the same Shape order as save_object."""
     depsgraph = bpy.context.evaluated_depsgraph_get()
     obj_eval = obj.evaluated_get(depsgraph)
     mesh = obj_eval.to_mesh(
@@ -850,15 +850,28 @@ def _evaluated_animation_points(obj, base_matrix):
         _apply_baked_transform(bm, base_matrix)
         bm.verts.index_update()
         bm.faces.index_update()
-        points = tuple(
-            tuple(float(value) for value in vertex.co[:3])
-            for vertex in bm.verts
-        )
-        topology = tuple(
-            tuple(loop.vert.index for loop in face.loops)
-            for face in bm.faces
-        )
-        return points, topology
+        if not split_material_shapes:
+            return {
+                0: tuple(
+                    tuple(float(value) for value in vertex.co[:3])
+                    for vertex in bm.verts
+                )
+            }
+
+        material_count = len(obj.material_slots)
+        points_by_index = {}
+        for material_index in sorted(
+            {_face_material_index(face, material_count) for face in bm.faces}
+        ):
+            subset = _material_bmesh_subset(bm, material_index, material_count)
+            try:
+                points_by_index[material_index] = tuple(
+                    tuple(float(value) for value in vertex.co[:3])
+                    for vertex in subset.verts
+                )
+            finally:
+                subset.free()
+        return points_by_index
     finally:
         bm.free()
         obj_eval.to_mesh_clear()
@@ -883,62 +896,74 @@ def _sample_coordinate_animations(
         return {}
 
     candidates = [
-        obj
+        (obj, _object_needs_split_material_shapes(obj, use_color, color_type))
         for obj in mesh_objects
         if (
             getattr(obj.data, "shape_keys", None) is not None
             or _has_enabled_mesh_modifier(obj)
         )
-        and not _object_needs_split_material_shapes(obj, use_color, color_type)
     ]
     if not candidates:
         return {}
 
-    samples = {id(obj): [] for obj in candidates}
-    valid = {id(obj): True for obj in candidates}
+    samples = {id(obj): {} for obj, _split in candidates}
+    valid = {id(obj): True for obj, _split in candidates}
     base_matrices = {}
-    base_point_counts = {}
     with _preserve_scene_frame(scene):
         scene.frame_set(frames[0])
-        for obj in candidates:
+        for obj, _split in candidates:
             base_matrices[id(obj)] = global_matrix @ obj.matrix_world.copy()
 
         for frame in frames:
             scene.frame_set(frame)
-            for obj in candidates:
+            for obj, split_material_shapes in candidates:
                 object_id = id(obj)
                 if not valid[object_id]:
                     continue
-                points, _topology = _evaluated_animation_points(
+                points_by_index = _evaluated_animation_points(
                     obj,
                     base_matrices[object_id],
+                    split_material_shapes,
                 )
-                if object_id not in base_point_counts:
-                    base_point_counts[object_id] = len(points)
-                elif len(points) != base_point_counts[object_id]:
+                object_samples = samples[object_id]
+                if not object_samples:
+                    object_samples.update(
+                        (material_index, [])
+                        for material_index in points_by_index
+                    )
+                if set(points_by_index) != set(object_samples) or any(
+                    len(points) != len(object_samples[material_index][0])
+                    for material_index, points in points_by_index.items()
+                    if object_samples[material_index]
+                ):
                     valid[object_id] = False
-                    samples[object_id] = []
+                    object_samples.clear()
                     continue
-                samples[object_id].append(points)
+                for material_index, points in points_by_index.items():
+                    object_samples[material_index].append(points)
 
     animations = {}
-    for obj in candidates:
+    for obj, _split in candidates:
         object_id = id(obj)
-        point_frames = samples[object_id]
-        if not valid[object_id] or len(point_frames) != len(frames):
+        if not valid[object_id]:
             continue
-        baseline = point_frames[0]
-        if not any(
-            abs(value - baseline[vertex_index][axis]) > 1.0e-9
-            for points in point_frames[1:]
-            for vertex_index, point in enumerate(points)
-            for axis, value in enumerate(point)
-        ):
-            continue
-        animations[object_id] = tuple(
-            tuple(component for point in points for component in point)
-            for points in point_frames
-        )
+        changing_shapes = {}
+        for material_index, point_frames in samples[object_id].items():
+            if len(point_frames) != len(frames):
+                continue
+            baseline = point_frames[0]
+            if any(
+                abs(value - baseline[vertex_index][axis]) > 1.0e-9
+                for points in point_frames[1:]
+                for vertex_index, point in enumerate(points)
+                for axis, value in enumerate(point)
+            ):
+                changing_shapes[material_index] = tuple(
+                    tuple(component for point in points for component in point)
+                    for points in point_frames
+                )
+        if changing_shapes:
+            animations[object_id] = changing_shapes
     return animations
 
 
@@ -1327,13 +1352,23 @@ def _write_transform_animations(
                 f"{animation['transform_name']}.set_scale\n"
             )
 
-        if animation.get("has_coordinates", False):
+        coordinate_channels = animation.get("coordinate_values_by_index")
+        if coordinate_channels is None and animation.get("has_coordinates", False):
+            coordinate_channels = {0: animation["coordinate_values"]}
+        for material_index, coordinate_values in (coordinate_channels or {}).items():
+            coordinate_name = animation.get("coordinate_names", {}).get(
+                material_index,
+                animation.get("coordinate_name"),
+            )
+            interpolator_name = animation.get(
+                "coordinate_interpolator_names", {}
+            ).get(material_index, animation.get("coordinate_interpolator_name"))
             coordinate_decimals = _coordinate_animation_decimal_places(
-                animation["coordinate_values"],
+                coordinate_values,
                 decimal_places,
             )
             fw(
-                f"\nDEF {animation['coordinate_interpolator_name']} "
+                f"\nDEF {interpolator_name} "
                 "CoordinateInterpolator {\n"
             )
             fw("\tkey [ ")
@@ -1341,18 +1376,18 @@ def _write_transform_animations(
                 fw(f"{_format_float(fraction, timing_decimals)} ")
             fw("]\n")
             fw("\tkeyValue [ ")
-            for points in animation["coordinate_values"]:
+            for points in coordinate_values:
                 for component in points:
                     fw(f"{_format_float(component, coordinate_decimals)} ")
             fw("]\n")
             fw("}\n")
             fw(
                 f"ROUTE {clock_name}.fraction_changed TO "
-                f"{animation['coordinate_interpolator_name']}.set_fraction\n"
+                f"{interpolator_name}.set_fraction\n"
             )
             fw(
-                f"ROUTE {animation['coordinate_interpolator_name']}.value_changed TO "
-                f"{animation['coordinate_name']}.set_point\n"
+                f"ROUTE {interpolator_name}.value_changed TO "
+                f"{coordinate_name}.set_point\n"
             )
 
         for material_index, channels in animation.get(
@@ -1866,6 +1901,7 @@ def save_object(
     coordinate_name=None,
     material_name=None,
     material_names=None,
+    coordinate_names=None,
 ):
     """Evaluate and export a single mesh object."""
     if obj.type != "MESH":
@@ -2009,7 +2045,11 @@ def save_object(
                         crease_angle,
                         [material_settings[material_index]],
                         two_sided_faces,
-                        None,
+                        (
+                            coordinate_names.get(material_index)
+                            if coordinate_names
+                            else None
+                        ),
                         material_names.get(material_index) if material_names else None,
                     )
                 finally:
@@ -2148,8 +2188,8 @@ def save(
         )
         for obj in mesh_objects:
             object_id = id(obj)
-            coordinate_values = coordinate_animations.get(object_id)
-            if coordinate_values is None:
+            coordinate_values_by_index = coordinate_animations.get(object_id)
+            if coordinate_values_by_index is None:
                 continue
             animation = animations_by_id.get(object_id)
             if animation is None:
@@ -2161,7 +2201,7 @@ def save(
                 transform_animations.append(animation)
                 animations_by_id[object_id] = animation
             animation["has_coordinates"] = True
-            animation["coordinate_values"] = coordinate_values
+            animation["coordinate_values_by_index"] = coordinate_values_by_index
 
         for obj in mesh_objects:
             object_id = id(obj)
@@ -2202,8 +2242,22 @@ def save(
             animation["location_interpolator_name"] = f"LocationInterpolator_{index}"
             animation["rotation_interpolator_name"] = f"RotationInterpolator_{index}"
             animation["scale_interpolator_name"] = f"ScaleInterpolator_{index}"
-            animation["coordinate_name"] = f"AnimatedCoordinates_{index}"
-            animation["coordinate_interpolator_name"] = f"CoordinateInterpolator_{index}"
+            coordinate_indices = sorted(
+                animation.get("coordinate_values_by_index", {})
+            )
+            multiple_coordinate_shapes = len(coordinate_indices) > 1
+            animation["coordinate_names"] = {}
+            animation["coordinate_interpolator_names"] = {}
+            for material_index in coordinate_indices:
+                suffix = (
+                    f"_{material_index + 1}" if multiple_coordinate_shapes else ""
+                )
+                animation["coordinate_names"][material_index] = (
+                    f"AnimatedCoordinates_{index}{suffix}"
+                )
+                animation["coordinate_interpolator_names"][material_index] = (
+                    f"CoordinateInterpolator_{index}{suffix}"
+                )
             material_indices = sorted(
                 animation.get("material_channels_by_index", {})
             )
@@ -2300,7 +2354,12 @@ def save(
                 geometry_group,
                 two_sided_faces=two_sided_faces,
                 coordinate_name=(
-                    animation["coordinate_name"]
+                    animation["coordinate_names"].get(0)
+                    if animation is not None and animation["has_coordinates"]
+                    else None
+                ),
+                coordinate_names=(
+                    animation["coordinate_names"]
                     if animation is not None and animation["has_coordinates"]
                     else None
                 ),

@@ -2,6 +2,12 @@
 
 All notable changes to this maintained fork are recorded here.
 
+## 0.7.0-alpha.16 - 2026-10-08
+
+- Exported baked deformation from inverse kinematics rigs with multiple Material Studio regions.
+- Added a Blender integration scene with a two bone IK chain and animated target, checking both material regions and their VRML coordinate routes.
+- Kept armature controls in Blender while exporting the evaluated mesh movement to VRML.
+
 ## 0.7.0-alpha.15 - 2026-10-07
 
 - Added an optional **Start Automatically** setting for non-looping animation.
