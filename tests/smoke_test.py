@@ -263,8 +263,8 @@ assert shared_animation_content.count(
     'ROUTE AnimationClock.fraction_changed TO LocationInterpolator_'
 ) == 2
 
-# Automatic one-shot playback starts at world time zero but retains click
-# routes so the animation can be replayed after it finishes.
+# Automatic one-shot playback uses the actual world-entry time and retains
+# click routes so the animation can be replayed after it finishes.
 automatic_animation_buffer = io.StringIO()
 writer._write_transform_animations(
     automatic_animation_buffer.write,
@@ -276,8 +276,14 @@ writer._write_transform_animations(
     True,
 )
 automatic_animation_content = automatic_animation_buffer.getvalue()
-assert automatic_animation_content.count('\tstartTime 0') == 2
-assert '\tstartTime -1' not in automatic_animation_content
+assert automatic_animation_content.count('DEF AnimationOnLoad ProximitySensor {') == 1
+assert automatic_animation_content.count('\tstartTime -1') == 2
+assert '\tstartTime 0' not in automatic_animation_content
+for index in (1, 2):
+    assert (
+        f'ROUTE AnimationOnLoad.enterTime TO AnimationClock_{index}.set_startTime'
+        in automatic_animation_content
+    )
 assert (
     'ROUTE AnimationTouch_1.touchTime TO AnimationClock_1.set_startTime'
     in automatic_animation_content
@@ -286,6 +292,22 @@ assert (
     'ROUTE AnimationTouch_2.touchTime TO AnimationClock_2.set_startTime'
     in automatic_animation_content
 )
+shared_automatic_buffer = io.StringIO()
+writer._write_transform_animations(
+    shared_automatic_buffer.write,
+    shared_animations,
+    1.0,
+    False,
+    3,
+    True,
+    True,
+)
+shared_automatic_content = shared_automatic_buffer.getvalue()
+assert shared_automatic_content.count('DEF AnimationOnLoad ProximitySensor {') == 1
+assert shared_automatic_content.count('DEF AnimationClock TimeSensor {') == 1
+assert shared_automatic_content.count(
+    'ROUTE AnimationOnLoad.enterTime TO AnimationClock.set_startTime'
+) == 1
 assert writer._animation_decimal_places(
     ((0.0, 0.0, 0.0), (0.4, 0.0, 0.0), (0.8, 0.0, 0.0)),
     0,

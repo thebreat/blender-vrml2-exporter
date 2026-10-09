@@ -1223,6 +1223,13 @@ def _write_transform_animations(
 
     timing_decimals = max(decimal_places, 6)
     fw("\n# Transform animation\n")
+    if start_automatically and not loop:
+        # A one-shot TimeSensor with startTime 0 has already expired by the
+        # time a VRML world loads. The ProximitySensor emits the viewer's
+        # actual entry time once it enters this world-enclosing region.
+        fw("DEF AnimationOnLoad ProximitySensor {\n")
+        fw("\tsize 1000000000 1000000000 1000000000\n")
+        fw("}\n")
     shared_clock = loop or play_together
     if shared_clock:
         fw("DEF AnimationClock TimeSensor {\n")
@@ -1232,8 +1239,10 @@ def _write_transform_animations(
         )
         fw(f"\tloop {'TRUE' if loop else 'FALSE'}\n")
         if not loop:
-            fw(f"\tstartTime {0 if start_automatically else -1}\n")
+            fw("\tstartTime -1\n")
         fw("}\n")
+        if start_automatically and not loop:
+            fw("ROUTE AnimationOnLoad.enterTime TO AnimationClock.set_startTime\n")
 
     for animation_index, animation in enumerate(animations, start=1):
         clock_name = (
@@ -1248,10 +1257,14 @@ def _write_transform_animations(
                 % _format_float(cycle_interval, timing_decimals)
             )
             fw("\tloop FALSE\n")
-            # A negative start time is already expired when the world loads.
-            # Zero starts once on load; the TouchSensor can replay it later.
-            fw(f"\tstartTime {0 if start_automatically else -1}\n")
+            # The TouchSensor or world-entry sensor supplies the current time.
+            fw("\tstartTime -1\n")
             fw("}\n")
+            if start_automatically:
+                fw(
+                    "ROUTE AnimationOnLoad.enterTime TO "
+                    f"{clock_name}.set_startTime\n"
+                )
 
         if animation["has_translation"]:
             value_decimals = _animation_decimal_places(

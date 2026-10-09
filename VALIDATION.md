@@ -37,7 +37,9 @@ blender --background --factory-startup --python tests/blender_location_animation
 This check covers object location, rotation, and scale; shape-key and Armature
 modifier coordinate animation; all six VRML2 Material Studio animation fields;
 independent and synchronized non-looping click clocks for multiple objects;
-optional one-shot playback on load; and discrete render visibility animation.
+world-entry sensor routes for optional one-shot playback on load; and discrete
+render visibility animation. Automatic playback must also be checked in a VRML
+viewer because these tests verify exported nodes and routes, not viewer timing.
 
 Run the IK animation check inside Blender with:
 

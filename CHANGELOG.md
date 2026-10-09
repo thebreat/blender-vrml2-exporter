@@ -2,6 +2,11 @@
 
 All notable changes to this maintained fork are recorded here.
 
+## 0.7.0-alpha.16.1 - 2026-10-09
+
+- Fixed **Start Automatically** for non-looping animation by routing the world's entry time to each animation clock.
+- Kept click-to-replay available after automatic playback, including synchronized animations.
+
 ## 0.7.0-alpha.16 - 2026-10-08
 
 - Exported baked deformation from inverse kinematics rigs with multiple Material Studio regions.

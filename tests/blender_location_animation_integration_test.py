@@ -508,8 +508,14 @@ def main():
             color_type="MATERIAL",
         )
         assert automatic.count("TimeSensor {") == 7
-        assert automatic.count("startTime 0") == 7
-        assert "startTime -1" not in automatic
+        assert automatic.count("DEF AnimationOnLoad ProximitySensor {") == 1
+        assert automatic.count("startTime -1") == 7
+        assert "startTime 0" not in automatic
+        for index in range(1, 8):
+            assert (
+                "ROUTE AnimationOnLoad.enterTime TO "
+                f"AnimationClock_{index}.set_startTime"
+            ) in automatic
         assert automatic.count("TouchSensor { }") == 7
         assert (
             "ROUTE AnimationTouch_1.touchTime TO "
