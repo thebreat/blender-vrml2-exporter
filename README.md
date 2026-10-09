@@ -10,7 +10,7 @@ A maintained Blender Extension for exporting mesh objects to **VRML 2.0 (`.wrl`)
 - **Bug reports and feature requests:** [GitHub Issues](https://github.com/thebreat/blender-vrml2-exporter/issues)
 - **License:** GNU General Public License, version 3 or any later version (`GPL-3.0-or-later`)
 - **Extension ID:** `io_scene_vrml2_export`
-- **Current package version:** `0.6.3`
+- **Current package version:** `0.7.0-alpha.16.1`
 - **Minimum Blender version:** `4.2.0`
 
 ## Features
@@ -19,6 +19,7 @@ A maintained Blender Extension for exporting mesh objects to **VRML 2.0 (`.wrl`)
 - Exports every mesh in the scene or selected objects only.
 - Applies evaluated modifiers when **Apply Modifiers** is enabled.
 - Applies object transforms, axis conversion, and a configurable global scale.
+- Exports sampled mesh-object location, rotation, positive scale, compatible modifier deformation, all six VRML2 Material Studio fields, and render visibility through VRML animation nodes when the alpha animation option is enabled.
 - Converts Blender shade smoothing to VRML `creaseAngle` values in radians.
 - Preserves Smooth by Angle thresholds such as 30°, 45°, and 90° per reusable geometry.
 - Preserves manually marked sharp edges alongside `creaseAngle` smoothing without changing the visible mesh shape.
@@ -49,13 +50,13 @@ A maintained Blender Extension for exporting mesh objects to **VRML 2.0 (`.wrl`)
 
 ## Install the packaged extension
 
-Use the included distributable archive named `io_scene_vrml2_export-0.6.3.zip`. **Do not extract it first.**
+Use the included distributable archive named `io_scene_vrml2_export-0.7.0-alpha.16.1.zip`. **Do not extract it first.**
 
 1. Open Blender 4.2 or newer.
 2. Open **Edit > Preferences**.
 3. Open **Get Extensions** or **Extensions**, depending on the Blender release.
 4. Open the menu in the upper-right corner and choose **Install from Disk**.
-5. Select `io_scene_vrml2_export-0.6.3.zip`.
+5. Select `io_scene_vrml2_export-0.7.0-alpha.16.1.zip`.
 6. Confirm the installation and enable **VRML2 Exporter** if Blender does not enable it automatically.
 7. Close Preferences.
 
@@ -108,6 +109,17 @@ the rest of the mesh and duplicates coordinate references only where the marked
 edge would otherwise be smoothed. Edges already kept sharp by the selected
 crease angle do not need to be duplicated.
 
+### Inverse kinematics animation
+
+Animate the IK target in Blender over the scene frame range. The mesh needs
+vertex weights and an enabled Armature modifier so Blender's evaluated mesh
+follows the rig. In the exporter, enable **Apply Modifiers** and **Export
+Animation**. For meshes with multiple Material Studio regions, select
+**Material Settings** as the color source. The WRL stores the visible mesh
+movement sampled from the rig; the IK target and bones remain in the Blender
+project. **Sample Every** controls the tradeoff between motion detail and file
+size. Start with 1 for the closest match to Blender.
+
 ### Export options
 
 | Option | Behavior |
@@ -118,6 +130,11 @@ crease angle do not need to be duplicated.
 | **Geometry Reuse: Linked Objects Only** | Default. Reuses geometry only for objects that intentionally share Blender mesh data, such as duplicates created with `Alt+D`. |
 | **Geometry Reuse: All Identical Geometry** | Also reuses independent objects, including unchanged `Shift+D` copies, when their complete exported geometry is identical. |
 | **Geometry Reuse: Off** | Writes every object's geometry separately using baked coordinates. |
+| **Export Animation** | Alpha feature. Samples changing mesh-object locations, rotations, positive scales, shape keys, compatible modifiers including IK driven armatures, VRML2 material settings across one or more material slots, and render visibility across the scene frame range. Deformation export requires **Apply Modifiers**. Disabled by default. |
+| **Loop Animation** | Disabled by default. Each animation stays stopped until its own object is clicked, then plays once independently. Enable this option to begin on load and repeat all animations together. |
+| **Play Animations Together** | Available for non-looping animation. Uses one stopped shared clock so clicking any animated object starts every exported animation together. Disabled by default. |
+| **Start Automatically** | Available for non-looping animation. Uses a world-entry sensor to start playback when the viewer opens the WRL; clicking can replay it afterward. Disabled by default. |
+| **Sample Every** | Samples animated transforms every specified number of Blender frames. A value of 1 most closely follows Blender; larger values reduce file size and export time. The final scene frame is always included. |
 | **Texture and UVs** | Exports the active UV map and a referenced image texture when one can be found. |
 | **Deduplicate UV Coordinates** | Default. Writes each rounded UV coordinate once and reuses its index. Disable this only when comparing against older exporter output. |
 | **Colors / Materials** | Enables color-attribute or material-setting export. |
@@ -133,7 +150,9 @@ crease angle do not need to be duplicated.
 
 ## Known limitations
 
-- The extension exports mesh geometry only. Cameras, lights, armatures, animation, constraints, and scene hierarchy are not exported.
+- The extension exports mesh objects only. Cameras, lights, armature objects/bones, IK targets, and scene hierarchy are not exported as controls. Keyframe an IK target in Blender; the exporter samples the resulting mesh deformation and writes it as VRML coordinate animation.
+- Animation support in `0.7.0-alpha.16.1` covers evaluated mesh-object world-location, world-rotation, positive scale, shape keys and enabled modifier deformation on stable-vertex-count meshes, including IK driven armatures and meshes split into multiple Material Studio Shapes, all six VRML2 Material Studio fields across one or more exported material slots, and keyed render visibility. Compatible modifiers include Armature, Displace, Simple Deform, Lattice, Curve, and Geometry Nodes. Non-looping objects use independent click clocks by default or one optional synchronized click clock, and can optionally play once on load; looping animation remains synchronized. Scale that reaches zero or becomes negative, and topology-changing deformation are not yet exported.
+- Visibility animation uses a standard VRML97 `Script` and `Switch`. The target viewer must permit ECMAScript execution. An object that ends hidden cannot be clicked again because it has no visible surface; animate it back to visible by the final frame or use looping mode.
 - Geometry is triangulated during export.
 - Mirrored (negative-scale) and sheared object transforms are baked into coordinates rather than instanced because VRML97 `Transform` scale values must be positive. Reflected geometry has its triangle winding corrected for one-sided VRML viewers.
 - Linked objects whose evaluated geometry differs because of modifiers, colors, or UV data are not combined.

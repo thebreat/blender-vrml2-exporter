@@ -105,6 +105,11 @@ assert package.ExportVRML.bl_idname == 'export_scene.vrml2'
 assert package.ExportVRML.filename_ext == '.wrl'
 assert package.ExportVRML.__annotations__['geometry_reuse']['default'] == 'LINKED'
 assert package.ExportVRML.__annotations__['two_sided_faces']['default'] is False
+assert package.ExportVRML.__annotations__['export_animation']['default'] is False
+assert package.ExportVRML.__annotations__['animation_loop']['default'] is False
+assert package.ExportVRML.__annotations__['animation_play_together']['default'] is False
+assert package.ExportVRML.__annotations__['animation_start_automatically']['default'] is False
+assert package.ExportVRML.__annotations__['animation_frame_step']['default'] == 1
 assert package.ExportVRML.__annotations__['decimal_places']['default'] == 6
 assert package.ExportVRML.__annotations__['deduplicate_uvs']['default'] is True
 assert package.ExportVRML.__annotations__['include_object_comments']['default'] is True
@@ -123,6 +128,202 @@ assert writer._vrml_quote(r'C:\textures\a "quoted" file.png') == '"C:/textures/a
 assert writer._format_float(10.0, 0) == '10'
 assert writer._format_float(-0.0001, 3) == '0'
 assert writer._format_float(1.23456, 3) == '1.235'
+assert writer._animation_frames(1, 25, 12) == (1, 13, 25)
+assert writer._animation_frames(1, 24, 10) == (1, 11, 21, 24)
+
+animation_buffer = io.StringIO()
+writer._write_transform_animations(
+    animation_buffer.write,
+    [
+        {
+            'transform_name': 'AnimatedTransform_1',
+            'location_interpolator_name': 'LocationInterpolator_1',
+            'rotation_interpolator_name': 'RotationInterpolator_1',
+            'scale_interpolator_name': 'ScaleInterpolator_1',
+            'touch_name': 'AnimationTouch_1',
+            'fractions': (0.0, 0.5, 1.0),
+            'translation_deltas': (
+                (0.0, 0.0, 0.0),
+                (1.0, 0.0, 0.0),
+                (2.0, 0.0, 0.0),
+            ),
+            'rotation_deltas': (
+                (0.0, 0.0, 1.0, 0.0),
+                (0.0, 0.0, 1.0, math.pi / 4.0),
+                (0.0, 0.0, 1.0, math.pi / 2.0),
+            ),
+            'scale_ratios': (
+                (1.0, 1.0, 1.0),
+                (1.5, 0.75, 1.25),
+                (2.0, 0.5, 1.5),
+            ),
+            'coordinate_name': 'AnimatedCoordinates_1',
+            'coordinate_interpolator_name': 'CoordinateInterpolator_1',
+            'coordinate_values': (
+                (0.0, 0.0, 0.0),
+                (0.0, 0.0, 0.5),
+                (0.0, 0.0, 1.0),
+            ),
+            'has_translation': True,
+            'has_rotation': True,
+            'has_scale': True,
+            'has_coordinates': True,
+        }
+    ],
+    1.0,
+    False,
+    3,
+)
+animation_content = animation_buffer.getvalue()
+assert 'DEF AnimationClock_1 TimeSensor {' in animation_content
+assert 'cycleInterval 1' in animation_content
+assert '\tloop FALSE' in animation_content
+assert '\tstartTime -1' in animation_content
+assert '\tkey [ 0 0.5 1 ]' in animation_content
+assert '\tkeyValue [ 0 0 0 1 0 0 2 0 0 ]' in animation_content
+assert (
+    'ROUTE AnimationClock_1.fraction_changed TO LocationInterpolator_1.set_fraction'
+    in animation_content
+)
+assert (
+    'ROUTE LocationInterpolator_1.value_changed TO '
+    'AnimatedTransform_1.set_translation'
+    in animation_content
+)
+assert 'DEF RotationInterpolator_1 OrientationInterpolator {' in animation_content
+assert 'keyValue [ 0 0 1 0 0 0 1 0.785 0 0 1 1.571 ]' in animation_content
+assert (
+    'ROUTE AnimationClock_1.fraction_changed TO RotationInterpolator_1.set_fraction'
+    in animation_content
+)
+assert (
+    'ROUTE RotationInterpolator_1.value_changed TO '
+    'AnimatedTransform_1.set_rotation'
+    in animation_content
+)
+assert 'DEF ScaleInterpolator_1 PositionInterpolator {' in animation_content
+assert 'keyValue [ 1 1 1 1.5 0.75 1.25 2 0.5 1.5 ]' in animation_content
+assert (
+    'ROUTE ScaleInterpolator_1.value_changed TO AnimatedTransform_1.set_scale'
+    in animation_content
+)
+assert 'DEF CoordinateInterpolator_1 CoordinateInterpolator {' in animation_content
+assert (
+    'ROUTE CoordinateInterpolator_1.value_changed TO AnimatedCoordinates_1.set_point'
+    in animation_content
+)
+assert (
+    'ROUTE AnimationTouch_1.touchTime TO AnimationClock_1.set_startTime'
+    in animation_content
+)
+assert animation_content.count(
+    'ROUTE AnimationTouch_1.touchTime TO AnimationClock_1.set_startTime'
+) == 1
+
+# Shared click playback uses one stopped clock. Every animated object's touch
+# sensor can start that clock, so the animations remain synchronized.
+shared_animations = []
+for index in (1, 2):
+    shared_animations.append(
+        {
+            'transform_name': f'AnimatedTransform_{index}',
+            'location_interpolator_name': f'LocationInterpolator_{index}',
+            'touch_name': f'AnimationTouch_{index}',
+            'fractions': (0.0, 1.0),
+            'translation_deltas': ((0.0, 0.0, 0.0), (float(index), 0.0, 0.0)),
+            'has_translation': True,
+            'has_rotation': False,
+            'has_scale': False,
+            'has_coordinates': False,
+        }
+    )
+shared_animation_buffer = io.StringIO()
+writer._write_transform_animations(
+    shared_animation_buffer.write,
+    shared_animations,
+    1.0,
+    False,
+    3,
+    True,
+)
+shared_animation_content = shared_animation_buffer.getvalue()
+assert shared_animation_content.count('DEF AnimationClock TimeSensor {') == 1
+assert 'AnimationClock_1' not in shared_animation_content
+assert '\tloop FALSE' in shared_animation_content
+assert '\tstartTime -1' in shared_animation_content
+assert (
+    'ROUTE AnimationTouch_1.touchTime TO AnimationClock.set_startTime'
+    in shared_animation_content
+)
+assert (
+    'ROUTE AnimationTouch_2.touchTime TO AnimationClock.set_startTime'
+    in shared_animation_content
+)
+assert shared_animation_content.count(
+    'ROUTE AnimationClock.fraction_changed TO LocationInterpolator_'
+) == 2
+
+# Automatic one-shot playback uses the actual world-entry time and retains
+# click routes so the animation can be replayed after it finishes.
+automatic_animation_buffer = io.StringIO()
+writer._write_transform_animations(
+    automatic_animation_buffer.write,
+    shared_animations,
+    1.0,
+    False,
+    3,
+    False,
+    True,
+)
+automatic_animation_content = automatic_animation_buffer.getvalue()
+assert automatic_animation_content.count('DEF AnimationOnLoad ProximitySensor {') == 1
+assert automatic_animation_content.count('\tstartTime -1') == 2
+assert '\tstartTime 0' not in automatic_animation_content
+for index in (1, 2):
+    assert (
+        f'ROUTE AnimationOnLoad.enterTime TO AnimationClock_{index}.set_startTime'
+        in automatic_animation_content
+    )
+assert (
+    'ROUTE AnimationTouch_1.touchTime TO AnimationClock_1.set_startTime'
+    in automatic_animation_content
+)
+assert (
+    'ROUTE AnimationTouch_2.touchTime TO AnimationClock_2.set_startTime'
+    in automatic_animation_content
+)
+shared_automatic_buffer = io.StringIO()
+writer._write_transform_animations(
+    shared_automatic_buffer.write,
+    shared_animations,
+    1.0,
+    False,
+    3,
+    True,
+    True,
+)
+shared_automatic_content = shared_automatic_buffer.getvalue()
+assert shared_automatic_content.count('DEF AnimationOnLoad ProximitySensor {') == 1
+assert shared_automatic_content.count('DEF AnimationClock TimeSensor {') == 1
+assert shared_automatic_content.count(
+    'ROUTE AnimationOnLoad.enterTime TO AnimationClock.set_startTime'
+) == 1
+assert writer._animation_decimal_places(
+    ((0.0, 0.0, 0.0), (0.4, 0.0, 0.0), (0.8, 0.0, 0.0)),
+    0,
+) == 1
+assert writer._rotation_animation_decimal_places(
+    (
+        (0.0, 0.0, 1.0, 0.0),
+        (1.0, 0.0, 0.0, 0.004),
+        (1.0, 0.0, 0.0, 0.008),
+    ),
+    0,
+) == 3
+assert writer._scale_animation_decimal_places(
+    ((1.0, 1.0, 1.0), (0.004, 1.0, 1.0), (0.008, 1.0, 1.0)),
+    0,
+) == 3
 
 
 class FakeMaterial(dict):

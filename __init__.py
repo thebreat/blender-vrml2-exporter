@@ -65,6 +65,50 @@ class ExportVRML(bpy.types.Operator, ExportHelper):
         default=False,
     )
 
+    export_animation: BoolProperty(
+        name="Export Animation",
+        description=(
+            "Export mesh transforms, deformation, materials, and visibility "
+            "over the scene frame range using VRML animation nodes"
+        ),
+        default=False,
+    )
+
+    animation_loop: BoolProperty(
+        name="Loop Animation",
+        description=(
+            "Repeat continuously and begin when the WRL opens; when disabled, "
+            "each animation stays stopped until its own object is clicked"
+        ),
+        default=False,
+    )
+
+    animation_play_together: BoolProperty(
+        name="Play Animations Together",
+        description=(
+            "Use one shared click-controlled clock so clicking any animated "
+            "object starts every exported animation together"
+        ),
+        default=False,
+    )
+
+    animation_start_automatically: BoolProperty(
+        name="Start Automatically",
+        description=(
+            "Play a non-looping animation once when the WRL opens; it can "
+            "still be replayed by clicking afterward"
+        ),
+        default=False,
+    )
+
+    animation_frame_step: IntProperty(
+        name="Sample Every",
+        description="Sample animated location, rotation, and scale every this many Blender frames",
+        min=1,
+        max=120,
+        default=1,
+    )
+
     geometry_reuse: EnumProperty(
         name="Geometry Reuse",
         description="Choose which mesh objects may share VRML DEF/USE geometry",
@@ -214,6 +258,27 @@ class ExportVRML(bpy.types.Operator, ExportHelper):
         row = layout.row()
         row.active = self.use_color
         row.prop(self, "color_type")
+
+        layout.separator()
+        layout.label(text="Animation (Alpha)")
+        layout.prop(self, "export_animation")
+
+        animation_row = layout.row(align=True)
+        animation_row.active = self.export_animation
+        animation_row.prop(self, "animation_loop")
+        animation_row.prop(self, "animation_frame_step")
+
+        together_row = layout.row()
+        together_row.active = self.export_animation and not self.animation_loop
+        together_row.prop(self, "animation_play_together")
+
+        automatic_row = layout.row()
+        automatic_row.active = self.export_animation and not self.animation_loop
+        automatic_row.prop(self, "animation_start_automatically")
+
+        frame_range_row = layout.row()
+        frame_range_row.active = self.export_animation
+        frame_range_row.label(text="Uses the scene start and end frames")
 
         layout.separator()
         layout.prop(self, "axis_forward")

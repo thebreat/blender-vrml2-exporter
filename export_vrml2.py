@@ -13,6 +13,7 @@ import math
 import os
 import stat
 import tempfile
+from contextlib import contextmanager
 
 import bmesh
 import bpy
@@ -38,6 +39,20 @@ _VRML2_MATERIAL_DEFAULTS = {
     "shininess": 0.2,
     "transparency": 0.0,
 }
+
+_VRML2_MATERIAL_POINTER_NAME = "vrml2_material"
+
+_VRML2_ANIMATED_COLOR_FIELDS = (
+    ("diffuse_color", "DiffuseColor", "diffuseColor"),
+    ("emissive_color", "EmissiveColor", "emissiveColor"),
+    ("specular_color", "SpecularColor", "specularColor"),
+)
+
+_VRML2_ANIMATED_SCALAR_FIELDS = (
+    ("ambient_intensity", "AmbientIntensity", "ambientIntensity"),
+    ("shininess", "Shininess", "shininess"),
+    ("transparency", "Transparency", "transparency"),
+)
 
 
 def _clamp_material_value(value, default):
@@ -69,6 +84,32 @@ def _material_studio_settings(material):
     """Read VRML2 Material Studio data without importing or requiring that add-on."""
     if material is None:
         return None
+
+
+    # When Material Studio is enabled, its RNA PropertyGroup is the live source
+    # Blender evaluates for keyframes. The ID properties below are a portable
+    # static-export snapshot and may not be refreshed during frame evaluation.
+    live_properties = getattr(material, _VRML2_MATERIAL_POINTER_NAME, None)
+    if (
+        live_properties is not None
+        and bool(getattr(live_properties, "initialized", False))
+        and bool(getattr(live_properties, "enabled", False))
+    ):
+        settings = {}
+        for field in ("diffuse_color", "emissive_color", "specular_color"):
+            default = _VRML2_MATERIAL_DEFAULTS[field]
+            settings[field] = _clamp_material_color(
+                getattr(live_properties, field, default),
+                default,
+            )
+        for field in ("ambient_intensity", "shininess", "transparency"):
+            default = _VRML2_MATERIAL_DEFAULTS[field]
+            settings[field] = _clamp_material_value(
+                getattr(live_properties, field, default),
+                default,
+            )
+        return settings
+
     try:
         initialized = bool(material.get(_VRML2_MATERIAL_KEYS["initialized"], False))
         enabled = bool(material.get(_VRML2_MATERIAL_KEYS["enabled"], False))
@@ -470,6 +511,7 @@ def _write_indexed_face_set(
     deduplicate_uvs,
     crease_angle,
     two_sided_faces=False,
+    coordinate_name=None,
 ):
     """Write the reusable geometry portion of a VRML Shape node."""
     coordinate_decimals = _coordinate_decimal_places(bm, decimal_places)
@@ -481,7 +523,10 @@ def _write_indexed_face_set(
     if crease_angle > 0.0:
         angle_decimals = max(decimal_places, 6)
         fw(f"\tcreaseAngle {_format_float(crease_angle, angle_decimals)}\n")
-    fw("\tcoord Coordinate {\n")
+    if coordinate_name is None:
+        fw("\tcoord Coordinate {\n")
+    else:
+        fw(f"\tcoord DEF {coordinate_name} Coordinate {{\n")
     fw("\t\tpoint [ ")
     for vertex in bm.verts:
         fw(
@@ -605,6 +650,860 @@ def _indent_after_first_line(text, indent):
     if not lines:
         return text
     return lines[0] + "".join(indent + line for line in lines[1:])
+
+
+def _indent_block(text, indent):
+    """Indent every line in a generated VRML block."""
+    return "".join(indent + line for line in text.splitlines(keepends=True))
+
+
+def _animation_frames(frame_start, frame_end, frame_step):
+    """Return sampled scene frames, always including both range endpoints."""
+    if frame_step < 1:
+        raise ValueError("Animation frame step must be at least 1")
+    if frame_end <= frame_start:
+        return (frame_start,)
+    frames = list(range(frame_start, frame_end + 1, frame_step))
+    if frames[-1] != frame_end:
+        frames.append(frame_end)
+    return tuple(frames)
+
+
+def _matrix_translation(matrix):
+    """Return a matrix translation without depending on a concrete matrix type."""
+    return tuple(float(matrix[row][3]) for row in range(3))
+
+
+@contextmanager
+def _preserve_scene_frame(scene):
+    """Restore Blender's current frame after temporary animation sampling."""
+    original_frame = scene.frame_current
+    original_subframe = getattr(scene, "frame_subframe", 0.0)
+    try:
+        yield
+    finally:
+        scene.frame_set(original_frame, subframe=original_subframe)
+
+
+@contextmanager
+def _temporary_scene_frame(scene, frame):
+    """Evaluate an export at one frame and restore the user's timeline position."""
+    if frame is None:
+        yield
+        return
+    with _preserve_scene_frame(scene):
+        scene.frame_set(frame)
+        yield
+
+
+def _quaternion_dot(first, second):
+    """Return the dot product of two quaternion-like four-value sequences."""
+    return sum(float(a) * float(b) for a, b in zip(first, second))
+
+
+def _quaternion_axis_angle(rotation):
+    """Return a stable VRML axis-angle tuple for a Blender quaternion."""
+    axis, angle = rotation.to_axis_angle()
+    if abs(angle) < 1.0e-10:
+        return (0.0, 0.0, 1.0, 0.0)
+    return tuple(float(component) for component in axis) + (float(angle),)
+
+
+def _sample_transform_animations(
+    scene,
+    mesh_objects,
+    global_matrix,
+    frame_start,
+    frame_end,
+    frame_step,
+):
+    """Sample changing exported world locations, rotations, and positive scales."""
+    frames = _animation_frames(frame_start, frame_end, frame_step)
+    if len(frames) < 2:
+        return frames, []
+
+    position_samples = [[] for _obj in mesh_objects]
+    rotation_samples = [[] for _obj in mesh_objects]
+    scale_samples = [[] for _obj in mesh_objects]
+    with _preserve_scene_frame(scene):
+        for frame in frames:
+            scene.frame_set(frame)
+            for index, obj in enumerate(mesh_objects):
+                export_matrix = global_matrix @ obj.matrix_world
+                position_samples[index].append(_matrix_translation(export_matrix))
+                _translation, rotation, scale = export_matrix.decompose()
+                rotation.normalize()
+                rotation_samples[index].append(rotation)
+                scale_samples[index].append(tuple(float(value) for value in scale))
+
+    duration = float(frame_end - frame_start)
+    fractions = tuple((frame - frame_start) / duration for frame in frames)
+    animations = []
+    for obj, positions, rotations, scales in zip(
+        mesh_objects,
+        position_samples,
+        rotation_samples,
+        scale_samples,
+    ):
+        start_position = positions[0]
+        translation_deltas = tuple(
+            tuple(position[axis] - start_position[axis] for axis in range(3))
+            for position in positions
+        )
+        has_translation = any(
+            abs(component) > 1.0e-9
+            for delta in translation_deltas[1:]
+            for component in delta
+        )
+
+        start_rotation = rotations[0]
+        has_rotation = any(
+            1.0 - abs(_quaternion_dot(start_rotation, rotation)) > 1.0e-10
+            for rotation in rotations[1:]
+        )
+
+        start_scale = scales[0]
+        scale_supported = all(
+            component > 1.0e-9
+            for scale in scales
+            for component in scale
+        )
+        if scale_supported:
+            scale_ratios = tuple(
+                tuple(scale[axis] / start_scale[axis] for axis in range(3))
+                for scale in scales
+            )
+            has_scale = any(
+                abs(component - 1.0) > 1.0e-6
+                for ratio in scale_ratios[1:]
+                for component in ratio
+            )
+        else:
+            scale_ratios = tuple((1.0, 1.0, 1.0) for _scale in scales)
+            has_scale = False
+
+        if not has_translation and not has_rotation and not has_scale:
+            continue
+
+        rotation_deltas = []
+        previous_delta = None
+        for rotation in rotations:
+            delta = rotation @ start_rotation.conjugated()
+            delta.normalize()
+            if previous_delta is not None:
+                delta.make_compatible(previous_delta)
+            rotation_deltas.append(_quaternion_axis_angle(delta))
+            previous_delta = delta
+
+        index = len(animations) + 1
+        animations.append(
+            {
+                "object": obj,
+                "transform_name": f"AnimatedTransform_{index}",
+                "location_interpolator_name": f"LocationInterpolator_{index}",
+                "rotation_interpolator_name": f"RotationInterpolator_{index}",
+                "scale_interpolator_name": f"ScaleInterpolator_{index}",
+                "touch_name": f"AnimationTouch_{index}",
+                "fractions": fractions,
+                "center": start_position,
+                "translation_deltas": translation_deltas,
+                "rotation_deltas": tuple(rotation_deltas),
+                "scale_orientation": _quaternion_axis_angle(start_rotation),
+                "scale_ratios": scale_ratios,
+                "has_translation": has_translation,
+                "has_rotation": has_rotation,
+                "has_scale": has_scale,
+            }
+        )
+    return frames, animations
+
+
+def _object_needs_split_material_shapes(obj, use_color, color_type):
+    """Return whether full per-material settings require multiple Shapes."""
+    if not use_color or color_type != "MATERIAL":
+        return False
+    materials = [slot.material for slot in obj.material_slots]
+    if len(materials) < 2:
+        return False
+    settings = [_material_export_settings(material) for material in materials]
+    used_indices = {
+        min(max(int(polygon.material_index), 0), len(settings) - 1)
+        for polygon in obj.data.polygons
+    }
+    return any(len(settings[index]) > 1 for index in used_indices)
+
+
+def _evaluated_animation_points(obj, base_matrix, split_material_shapes=False):
+    """Return export-space points in the same Shape order as save_object."""
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    obj_eval = obj.evaluated_get(depsgraph)
+    mesh = obj_eval.to_mesh(
+        preserve_all_data_layers=True,
+        depsgraph=depsgraph,
+    )
+    bm = bmesh.new()
+    try:
+        bm.from_mesh(mesh)
+        bmesh.ops.triangulate(bm, faces=list(bm.faces))
+        crease_angle = _crease_angle_for_mesh(obj, bm, True)
+        _split_sharp_edges_for_crease_angle(bm, crease_angle)
+        _apply_baked_transform(bm, base_matrix)
+        bm.verts.index_update()
+        bm.faces.index_update()
+        if not split_material_shapes:
+            return {
+                0: tuple(
+                    tuple(float(value) for value in vertex.co[:3])
+                    for vertex in bm.verts
+                )
+            }
+
+        material_count = len(obj.material_slots)
+        points_by_index = {}
+        for material_index in sorted(
+            {_face_material_index(face, material_count) for face in bm.faces}
+        ):
+            subset = _material_bmesh_subset(bm, material_index, material_count)
+            try:
+                points_by_index[material_index] = tuple(
+                    tuple(float(value) for value in vertex.co[:3])
+                    for vertex in subset.verts
+                )
+            finally:
+                subset.free()
+        return points_by_index
+    finally:
+        bm.free()
+        obj_eval.to_mesh_clear()
+
+
+def _has_enabled_mesh_modifier(obj):
+    """Return whether an object has a modifier enabled for evaluation."""
+    return any(modifier.show_viewport for modifier in obj.modifiers)
+
+
+def _sample_coordinate_animations(
+    scene,
+    mesh_objects,
+    global_matrix,
+    frames,
+    use_mesh_modifiers,
+    use_color,
+    color_type,
+):
+    """Sample supported deformation when evaluated vertex counts stay fixed."""
+    if len(frames) < 2 or not use_mesh_modifiers:
+        return {}
+
+    candidates = [
+        (obj, _object_needs_split_material_shapes(obj, use_color, color_type))
+        for obj in mesh_objects
+        if (
+            getattr(obj.data, "shape_keys", None) is not None
+            or _has_enabled_mesh_modifier(obj)
+        )
+    ]
+    if not candidates:
+        return {}
+
+    samples = {id(obj): {} for obj, _split in candidates}
+    valid = {id(obj): True for obj, _split in candidates}
+    base_matrices = {}
+    with _preserve_scene_frame(scene):
+        scene.frame_set(frames[0])
+        for obj, _split in candidates:
+            base_matrices[id(obj)] = global_matrix @ obj.matrix_world.copy()
+
+        for frame in frames:
+            scene.frame_set(frame)
+            for obj, split_material_shapes in candidates:
+                object_id = id(obj)
+                if not valid[object_id]:
+                    continue
+                points_by_index = _evaluated_animation_points(
+                    obj,
+                    base_matrices[object_id],
+                    split_material_shapes,
+                )
+                object_samples = samples[object_id]
+                if not object_samples:
+                    object_samples.update(
+                        (material_index, [])
+                        for material_index in points_by_index
+                    )
+                if set(points_by_index) != set(object_samples) or any(
+                    len(points) != len(object_samples[material_index][0])
+                    for material_index, points in points_by_index.items()
+                    if object_samples[material_index]
+                ):
+                    valid[object_id] = False
+                    object_samples.clear()
+                    continue
+                for material_index, points in points_by_index.items():
+                    object_samples[material_index].append(points)
+
+    animations = {}
+    for obj, _split in candidates:
+        object_id = id(obj)
+        if not valid[object_id]:
+            continue
+        changing_shapes = {}
+        for material_index, point_frames in samples[object_id].items():
+            if len(point_frames) != len(frames):
+                continue
+            baseline = point_frames[0]
+            if any(
+                abs(value - baseline[vertex_index][axis]) > 1.0e-9
+                for points in point_frames[1:]
+                for vertex_index, point in enumerate(points)
+                for axis, value in enumerate(point)
+            ):
+                changing_shapes[material_index] = tuple(
+                    tuple(component for point in points for component in point)
+                    for points in point_frames
+                )
+        if changing_shapes:
+            animations[object_id] = changing_shapes
+    return animations
+
+
+def _sample_material_animations(
+    scene,
+    mesh_objects,
+    frames,
+    use_color,
+    color_type,
+):
+    """Sample changing fields for exported Material nodes by material slot."""
+    if len(frames) < 2 or not use_color or color_type != "MATERIAL":
+        return {}
+
+    candidates = []
+    for obj in mesh_objects:
+        materials = [slot.material for slot in obj.material_slots]
+        if not materials:
+            continue
+        used_indices = sorted(
+            {
+                min(max(int(polygon.material_index), 0), len(materials) - 1)
+                for polygon in obj.data.polygons
+            }
+        )
+        if len(materials) > 1 and not _object_needs_split_material_shapes(
+            obj,
+            use_color,
+            color_type,
+        ):
+            continue
+        used_materials = [
+            (index, materials[index])
+            for index in used_indices
+            if materials[index] is not None
+        ]
+        if used_materials:
+            candidates.append((obj, used_materials))
+    if not candidates:
+        return {}
+
+    samples = {
+        id(obj): {
+            material_index: {field: [] for field in _VRML2_MATERIAL_DEFAULTS}
+            for material_index, _material in used_materials
+        }
+        for obj, used_materials in candidates
+    }
+    with _preserve_scene_frame(scene):
+        for frame in frames:
+            scene.frame_set(frame)
+            for obj, used_materials in candidates:
+                for material_index, material in used_materials:
+                    settings = _material_export_settings(material)
+                    for field, value in settings.items():
+                        samples[id(obj)][material_index][field].append(value)
+
+    animations = {}
+    for obj, used_materials in candidates:
+        changing_materials = {}
+        for material_index, _material in used_materials:
+            changing_fields = {}
+            material_samples = samples[id(obj)][material_index]
+            for field, values in material_samples.items():
+                if len(values) != len(frames):
+                    continue
+                baseline = values[0]
+                if isinstance(baseline, tuple):
+                    changed = any(
+                        abs(component - baseline[axis]) > 1.0e-9
+                        for value in values[1:]
+                        for axis, component in enumerate(value)
+                    )
+                else:
+                    changed = any(
+                        abs(value - baseline) > 1.0e-9
+                        for value in values[1:]
+                    )
+                if changed:
+                    changing_fields[field] = tuple(values)
+            if changing_fields:
+                changing_materials[material_index] = changing_fields
+        if changing_materials:
+            animations[id(obj)] = changing_materials
+    return animations
+
+
+def _sample_visibility_animations(scene, mesh_objects, frames):
+    """Sample Blender render visibility as discrete visible/hidden states."""
+    if len(frames) < 2:
+        return {}
+
+    samples = {id(obj): [] for obj in mesh_objects}
+    with _preserve_scene_frame(scene):
+        for frame in frames:
+            scene.frame_set(frame)
+            for obj in mesh_objects:
+                samples[id(obj)].append(not bool(obj.hide_render))
+
+    return {
+        object_id: tuple(values)
+        for object_id, values in samples.items()
+        if any(value != values[0] for value in values[1:])
+    }
+
+
+def _empty_object_animation(obj, fractions, frames):
+    """Create a neutral animation record for non-transform animation channels."""
+    return {
+        "object": obj,
+        "fractions": fractions,
+        "center": (0.0, 0.0, 0.0),
+        "translation_deltas": tuple((0.0, 0.0, 0.0) for _frame in frames),
+        "rotation_deltas": tuple((0.0, 0.0, 1.0, 0.0) for _frame in frames),
+        "scale_orientation": (0.0, 0.0, 1.0, 0.0),
+        "scale_ratios": tuple((1.0, 1.0, 1.0) for _frame in frames),
+        "has_translation": False,
+        "has_rotation": False,
+        "has_scale": False,
+    }
+
+
+def _animation_decimal_places(deltas, requested, maximum=9):
+    """Retain enough precision that sampled numeric changes do not disappear."""
+    component_count = len(deltas[0]) if deltas else 0
+    for decimals in range(requested, maximum + 1):
+        formatted = [
+            tuple(_format_float(component, decimals) for component in delta)
+            for delta in deltas
+        ]
+        collapsed_change = any(
+            any(
+                abs(current[axis] - previous[axis]) > 1.0e-9
+                for axis in range(component_count)
+            )
+            and formatted[index] == formatted[index - 1]
+            for index, (previous, current) in enumerate(
+                zip(deltas, deltas[1:]),
+                start=1,
+            )
+        )
+        if not collapsed_change:
+            return decimals
+    return maximum
+
+
+def _axis_angle_quaternion(rotation):
+    """Convert an axis-angle tuple to a normalized quaternion tuple."""
+    x, y, z, angle = (float(value) for value in rotation)
+    magnitude = math.sqrt(x * x + y * y + z * z)
+    if magnitude <= 1.0e-12 or abs(angle) <= 1.0e-12:
+        return (1.0, 0.0, 0.0, 0.0)
+    half_angle = angle * 0.5
+    sine = math.sin(half_angle) / magnitude
+    return (
+        math.cos(half_angle),
+        x * sine,
+        y * sine,
+        z * sine,
+    )
+
+
+def _orientations_differ(first, second, tolerance=1.0e-10):
+    """Return whether two axis-angle values represent different orientations."""
+    first_quaternion = _axis_angle_quaternion(first)
+    second_quaternion = _axis_angle_quaternion(second)
+    return (
+        1.0 - abs(_quaternion_dot(first_quaternion, second_quaternion))
+        > tolerance
+    )
+
+
+def _rotation_animation_decimal_places(rotations, requested, maximum=9):
+    """Retain enough precision that sampled orientation changes remain visible."""
+    for decimals in range(requested, maximum + 1):
+        rounded = [
+            tuple(
+                float(_format_float(component, decimals))
+                for component in rotation
+            )
+            for rotation in rotations
+        ]
+        collapsed_change = any(
+            _orientations_differ(previous, current)
+            and not _orientations_differ(
+                rounded[index - 1],
+                rounded[index],
+            )
+            for index, (previous, current) in enumerate(
+                zip(rotations, rotations[1:]),
+                start=1,
+            )
+        )
+        if not collapsed_change:
+            return decimals
+    return maximum
+
+
+def _scale_animation_decimal_places(scales, requested, maximum=9):
+    """Keep animated positive scale values non-zero and visibly distinct."""
+    for decimals in range(requested, maximum + 1):
+        formatted = [
+            tuple(_format_float(component, decimals) for component in scale)
+            for scale in scales
+        ]
+        if any("0" in scale for scale in formatted):
+            continue
+        collapsed_change = any(
+            any(
+                abs(current[axis] - previous[axis]) > 1.0e-9
+                for axis in range(3)
+            )
+            and formatted[index] == formatted[index - 1]
+            for index, (previous, current) in enumerate(
+                zip(scales, scales[1:]),
+                start=1,
+            )
+        )
+        if not collapsed_change:
+            return decimals
+    return maximum
+
+
+def _coordinate_animation_decimal_places(point_frames, requested, maximum=9):
+    """Keep every genuinely changing animated coordinate from rounding away."""
+    for decimals in range(requested, maximum + 1):
+        formatted = [
+            tuple(_format_float(component, decimals) for component in points)
+            for points in point_frames
+        ]
+        collapsed_change = any(
+            abs(current[component] - previous[component]) > 1.0e-9
+            and formatted[index][component] == formatted[index - 1][component]
+            for index, (previous, current) in enumerate(
+                zip(point_frames, point_frames[1:]),
+                start=1,
+            )
+            for component in range(len(current))
+        )
+        if not collapsed_change:
+            return decimals
+    return maximum
+
+
+def _write_transform_animations(
+    fw,
+    animations,
+    cycle_interval,
+    loop,
+    decimal_places,
+    play_together=False,
+    start_automatically=False,
+):
+    """Write looping, shared-click, or independent animation clocks."""
+    if not animations:
+        return
+
+    timing_decimals = max(decimal_places, 6)
+    fw("\n# Transform animation\n")
+    if start_automatically and not loop:
+        # A one-shot TimeSensor with startTime 0 has already expired by the
+        # time a VRML world loads. The ProximitySensor emits the viewer's
+        # actual entry time once it enters this world-enclosing region.
+        fw("DEF AnimationOnLoad ProximitySensor {\n")
+        fw("\tsize 1000000000 1000000000 1000000000\n")
+        fw("}\n")
+    shared_clock = loop or play_together
+    if shared_clock:
+        fw("DEF AnimationClock TimeSensor {\n")
+        fw(
+            "\tcycleInterval %s\n"
+            % _format_float(cycle_interval, timing_decimals)
+        )
+        fw(f"\tloop {'TRUE' if loop else 'FALSE'}\n")
+        if not loop:
+            fw("\tstartTime -1\n")
+        fw("}\n")
+        if start_automatically and not loop:
+            fw("ROUTE AnimationOnLoad.enterTime TO AnimationClock.set_startTime\n")
+
+    for animation_index, animation in enumerate(animations, start=1):
+        clock_name = (
+            "AnimationClock"
+            if shared_clock
+            else animation.get("clock_name", f"AnimationClock_{animation_index}")
+        )
+        if not shared_clock:
+            fw(f"\nDEF {clock_name} TimeSensor {{\n")
+            fw(
+                "\tcycleInterval %s\n"
+                % _format_float(cycle_interval, timing_decimals)
+            )
+            fw("\tloop FALSE\n")
+            # The TouchSensor or world-entry sensor supplies the current time.
+            fw("\tstartTime -1\n")
+            fw("}\n")
+            if start_automatically:
+                fw(
+                    "ROUTE AnimationOnLoad.enterTime TO "
+                    f"{clock_name}.set_startTime\n"
+                )
+
+        if animation["has_translation"]:
+            value_decimals = _animation_decimal_places(
+                animation["translation_deltas"],
+                decimal_places,
+            )
+            fw(
+                f"\nDEF {animation['location_interpolator_name']} "
+                "PositionInterpolator {\n"
+            )
+            fw("\tkey [ ")
+            for fraction in animation["fractions"]:
+                fw(f"{_format_float(fraction, timing_decimals)} ")
+            fw("]\n")
+            fw("\tkeyValue [ ")
+            for delta in animation["translation_deltas"]:
+                fw(
+                    "%s %s %s "
+                    % tuple(
+                        _format_float(component, value_decimals)
+                        for component in delta
+                    )
+                )
+            fw("]\n")
+            fw("}\n")
+            fw(
+                f"ROUTE {clock_name}.fraction_changed TO "
+                f"{animation['location_interpolator_name']}.set_fraction\n"
+            )
+            fw(
+                f"ROUTE {animation['location_interpolator_name']}.value_changed TO "
+                f"{animation['transform_name']}.set_translation\n"
+            )
+
+        if animation["has_rotation"]:
+            rotation_decimals = _rotation_animation_decimal_places(
+                animation["rotation_deltas"],
+                decimal_places,
+            )
+            fw(
+                f"\nDEF {animation['rotation_interpolator_name']} "
+                "OrientationInterpolator {\n"
+            )
+            fw("\tkey [ ")
+            for fraction in animation["fractions"]:
+                fw(f"{_format_float(fraction, timing_decimals)} ")
+            fw("]\n")
+            fw("\tkeyValue [ ")
+            for rotation in animation["rotation_deltas"]:
+                fw(
+                    "%s %s %s %s "
+                    % tuple(
+                        _format_float(component, rotation_decimals)
+                        for component in rotation
+                    )
+                )
+            fw("]\n")
+            fw("}\n")
+            fw(
+                f"ROUTE {clock_name}.fraction_changed TO "
+                f"{animation['rotation_interpolator_name']}.set_fraction\n"
+            )
+            fw(
+                f"ROUTE {animation['rotation_interpolator_name']}.value_changed TO "
+                f"{animation['transform_name']}.set_rotation\n"
+            )
+
+        if animation["has_scale"]:
+            scale_decimals = _scale_animation_decimal_places(
+                animation["scale_ratios"],
+                decimal_places,
+            )
+            fw(
+                f"\nDEF {animation['scale_interpolator_name']} "
+                "PositionInterpolator {\n"
+            )
+            fw("\tkey [ ")
+            for fraction in animation["fractions"]:
+                fw(f"{_format_float(fraction, timing_decimals)} ")
+            fw("]\n")
+            fw("\tkeyValue [ ")
+            for scale in animation["scale_ratios"]:
+                fw(
+                    "%s %s %s "
+                    % tuple(
+                        _format_float(component, scale_decimals)
+                        for component in scale
+                    )
+                )
+            fw("]\n")
+            fw("}\n")
+            fw(
+                f"ROUTE {clock_name}.fraction_changed TO "
+                f"{animation['scale_interpolator_name']}.set_fraction\n"
+            )
+            fw(
+                f"ROUTE {animation['scale_interpolator_name']}.value_changed TO "
+                f"{animation['transform_name']}.set_scale\n"
+            )
+
+        coordinate_channels = animation.get("coordinate_values_by_index")
+        if coordinate_channels is None and animation.get("has_coordinates", False):
+            coordinate_channels = {0: animation["coordinate_values"]}
+        for material_index, coordinate_values in (coordinate_channels or {}).items():
+            coordinate_name = animation.get("coordinate_names", {}).get(
+                material_index,
+                animation.get("coordinate_name"),
+            )
+            interpolator_name = animation.get(
+                "coordinate_interpolator_names", {}
+            ).get(material_index, animation.get("coordinate_interpolator_name"))
+            coordinate_decimals = _coordinate_animation_decimal_places(
+                coordinate_values,
+                decimal_places,
+            )
+            fw(
+                f"\nDEF {interpolator_name} "
+                "CoordinateInterpolator {\n"
+            )
+            fw("\tkey [ ")
+            for fraction in animation["fractions"]:
+                fw(f"{_format_float(fraction, timing_decimals)} ")
+            fw("]\n")
+            fw("\tkeyValue [ ")
+            for points in coordinate_values:
+                for component in points:
+                    fw(f"{_format_float(component, coordinate_decimals)} ")
+            fw("]\n")
+            fw("}\n")
+            fw(
+                f"ROUTE {clock_name}.fraction_changed TO "
+                f"{interpolator_name}.set_fraction\n"
+            )
+            fw(
+                f"ROUTE {interpolator_name}.value_changed TO "
+                f"{coordinate_name}.set_point\n"
+            )
+
+        for material_index, channels in animation.get(
+            "material_channels_by_index",
+            {},
+        ).items():
+            material_name = animation["material_names"][material_index]
+            interpolator_names = animation["material_interpolator_names"][material_index]
+            for field, _label, vrml_field in _VRML2_ANIMATED_COLOR_FIELDS:
+                values = channels.get(field)
+                if values is None:
+                    continue
+                color_decimals = _animation_decimal_places(values, decimal_places)
+                interpolator_name = interpolator_names[field]
+                fw(f"\nDEF {interpolator_name} ColorInterpolator {{\n")
+                fw("\tkey [ ")
+                for fraction in animation["fractions"]:
+                    fw(f"{_format_float(fraction, timing_decimals)} ")
+                fw("]\n")
+                fw("\tkeyValue [ ")
+                for color in values:
+                    fw(
+                        "%s %s %s "
+                        % tuple(
+                            _format_float(component, color_decimals)
+                            for component in color
+                        )
+                    )
+                fw("]\n")
+                fw("}\n")
+                fw(
+                    f"ROUTE {clock_name}.fraction_changed TO "
+                    f"{interpolator_name}.set_fraction\n"
+                )
+                fw(
+                    f"ROUTE {interpolator_name}.value_changed TO "
+                    f"{material_name}.set_{vrml_field}\n"
+                )
+
+            for field, _label, vrml_field in _VRML2_ANIMATED_SCALAR_FIELDS:
+                values = channels.get(field)
+                if values is None:
+                    continue
+                scalar_frames = tuple((value,) for value in values)
+                value_decimals = _animation_decimal_places(
+                    scalar_frames,
+                    decimal_places,
+                )
+                interpolator_name = interpolator_names[field]
+                fw(f"\nDEF {interpolator_name} ScalarInterpolator {{\n")
+                fw("\tkey [ ")
+                for fraction in animation["fractions"]:
+                    fw(f"{_format_float(fraction, timing_decimals)} ")
+                fw("]\n")
+                fw("\tkeyValue [ ")
+                for value in values:
+                    fw(f"{_format_float(value, value_decimals)} ")
+                fw("]\n")
+                fw("}\n")
+                fw(
+                    f"ROUTE {clock_name}.fraction_changed TO "
+                    f"{interpolator_name}.set_fraction\n"
+                )
+                fw(
+                    f"ROUTE {interpolator_name}.value_changed TO "
+                    f"{material_name}.set_{vrml_field}\n"
+                )
+
+        if animation.get("has_visibility", False):
+            fw(f"\nDEF {animation['visibility_script_name']} Script {{\n")
+            fw("\teventIn SFFloat set_fraction\n")
+            fw("\teventOut SFInt32 choice_changed\n")
+            fw("\tfield MFFloat key [ ")
+            for fraction in animation["fractions"]:
+                fw(f"{_format_float(fraction, timing_decimals)} ")
+            fw("]\n")
+            fw("\tfield MFInt32 keyValue [ ")
+            for visible in animation["visibility_values"]:
+                fw("0 " if visible else "-1 ")
+            fw("]\n")
+            script = (
+                "javascript:function set_fraction(value) { "
+                "var selected = keyValue[0]; "
+                "for (var i = 1; i < key.length; i++) { "
+                "if (value < key[i]) break; selected = keyValue[i]; } "
+                "choice_changed = selected; }"
+            )
+            fw(f"\turl [ {_vrml_quote(script)} ]\n")
+            fw("}\n")
+            fw(
+                f"ROUTE {clock_name}.fraction_changed TO "
+                f"{animation['visibility_script_name']}.set_fraction\n"
+            )
+            fw(
+                f"ROUTE {animation['visibility_script_name']}.choice_changed TO "
+                f"{animation['visibility_switch_name']}.set_whichChoice\n"
+            )
+
+        if not loop:
+            fw(
+                f"ROUTE {animation['touch_name']}.touchTime TO "
+                f"{clock_name}.set_startTime\n"
+            )
 
 
 def _decompose_vrml_transform(matrix):
@@ -796,10 +1695,17 @@ def _mesh_data_identity(obj):
     return as_pointer() if as_pointer is not None else id(mesh)
 
 
-def _write_material_node(fw, settings, indent, decimal_places):
+def _write_material_node(
+    fw,
+    settings,
+    indent,
+    decimal_places,
+    material_name=None,
+):
     """Write one VRML Material node from normalized export settings."""
     material_decimals = min(decimal_places, 4)
-    fw(f"{indent}material Material {{\n")
+    material_def = f"DEF {material_name} " if material_name else ""
+    fw(f"{indent}material {material_def}Material {{\n")
     for field, vrml_name in (
         ("diffuse_color", "diffuseColor"),
         ("emissive_color", "emissiveColor"),
@@ -845,6 +1751,8 @@ def save_bmesh(
     crease_angle=0.0,
     material_settings=None,
     two_sided_faces=False,
+    coordinate_name=None,
+    material_name=None,
 ):
     """Write one triangulated BMesh as a VRML Shape node."""
     base_src = os.path.dirname(bpy.data.filepath) or os.getcwd()
@@ -867,7 +1775,13 @@ def save_bmesh(
             if material_settings
             else {"diffuse_color": tuple(material_colors[0])}
         )
-        _write_material_node(fw, settings, f"{indent}\t\t", decimal_places)
+        _write_material_node(
+            fw,
+            settings,
+            f"{indent}\t\t",
+            decimal_places,
+            material_name,
+        )
     else:
         # A Shape whose Appearance has no material field is unlit, and an RGB
         # texture is then drawn flat at full brightness instead of being shaded
@@ -927,6 +1841,7 @@ def save_bmesh(
         deduplicate_uvs,
         crease_angle,
         two_sided_faces,
+        coordinate_name,
     )
     geometry_text = geometry_buffer.getvalue()
     geometry_indent = f"{indent}\t"
@@ -996,6 +1911,10 @@ def save_object(
     geometry_cache,
     geometry_group,
     two_sided_faces=False,
+    coordinate_name=None,
+    material_name=None,
+    material_names=None,
+    coordinate_names=None,
 ):
     """Evaluate and export a single mesh object."""
     if obj.type != "MESH":
@@ -1139,6 +2058,12 @@ def save_object(
                         crease_angle,
                         [material_settings[material_index]],
                         two_sided_faces,
+                        (
+                            coordinate_names.get(material_index)
+                            if coordinate_names
+                            else None
+                        ),
+                        material_names.get(material_index) if material_names else None,
                     )
                 finally:
                     subset.free()
@@ -1164,6 +2089,11 @@ def save_object(
                 crease_angle,
                 material_settings,
                 two_sided_faces,
+                coordinate_name,
+                (
+                    material_name
+                    or (material_names.get(0) if material_names else None)
+                ),
             )
         if transform is not None:
             fw("\t]\n")
@@ -1194,6 +2124,11 @@ def save(
     compact_output=False,
     create_wrz=False,
     two_sided_faces=False,
+    export_animation=False,
+    animation_loop=False,
+    animation_frame_step=1,
+    animation_play_together=False,
+    animation_start_automatically=False,
 ):
     """Export mesh objects from the current context to a VRML 2.0 file."""
     if global_matrix is None:
@@ -1214,6 +2149,170 @@ def save(
         raise ValueError(f"Unknown geometry reuse mode: {geometry_reuse!r}")
     if not 0 <= decimal_places <= 9:
         raise ValueError("Decimal places must be between 0 and 9")
+    if animation_frame_step < 1:
+        raise ValueError("Animation frame step must be at least 1")
+
+    animation_frame = None
+    transform_animations = []
+    animation_cycle_interval = 0.0
+    if export_animation:
+        animation_frame = scene.frame_start
+        sampled_frames, transform_animations = _sample_transform_animations(
+            scene,
+            mesh_objects,
+            global_matrix,
+            scene.frame_start,
+            scene.frame_end,
+            animation_frame_step,
+        )
+        coordinate_animations = _sample_coordinate_animations(
+            scene,
+            mesh_objects,
+            global_matrix,
+            sampled_frames,
+            use_mesh_modifiers,
+            use_color,
+            color_type,
+        )
+        material_animations = _sample_material_animations(
+            scene,
+            mesh_objects,
+            sampled_frames,
+            use_color,
+            color_type,
+        )
+        visibility_animations = _sample_visibility_animations(
+            scene,
+            mesh_objects,
+            sampled_frames,
+        )
+        animations_by_id = {
+            id(animation["object"]): animation
+            for animation in transform_animations
+        }
+        duration = float(scene.frame_end - scene.frame_start)
+        fractions = (
+            tuple(
+                (frame - scene.frame_start) / duration
+                for frame in sampled_frames
+            )
+            if duration > 0.0
+            else (0.0,)
+        )
+        for obj in mesh_objects:
+            object_id = id(obj)
+            coordinate_values_by_index = coordinate_animations.get(object_id)
+            if coordinate_values_by_index is None:
+                continue
+            animation = animations_by_id.get(object_id)
+            if animation is None:
+                animation = _empty_object_animation(
+                    obj,
+                    fractions,
+                    sampled_frames,
+                )
+                transform_animations.append(animation)
+                animations_by_id[object_id] = animation
+            animation["has_coordinates"] = True
+            animation["coordinate_values_by_index"] = coordinate_values_by_index
+
+        for obj in mesh_objects:
+            object_id = id(obj)
+            material_channels_by_index = material_animations.get(object_id)
+            if material_channels_by_index is None:
+                continue
+            animation = animations_by_id.get(object_id)
+            if animation is None:
+                animation = _empty_object_animation(
+                    obj,
+                    fractions,
+                    sampled_frames,
+                )
+                transform_animations.append(animation)
+                animations_by_id[object_id] = animation
+            animation["has_material"] = True
+            animation["material_channels_by_index"] = material_channels_by_index
+
+        for obj in mesh_objects:
+            object_id = id(obj)
+            visibility_values = visibility_animations.get(object_id)
+            if visibility_values is None:
+                continue
+            animation = animations_by_id.get(object_id)
+            if animation is None:
+                animation = _empty_object_animation(
+                    obj,
+                    fractions,
+                    sampled_frames,
+                )
+                transform_animations.append(animation)
+                animations_by_id[object_id] = animation
+            animation["has_visibility"] = True
+            animation["visibility_values"] = visibility_values
+
+        for index, animation in enumerate(transform_animations, start=1):
+            animation["transform_name"] = f"AnimatedTransform_{index}"
+            animation["location_interpolator_name"] = f"LocationInterpolator_{index}"
+            animation["rotation_interpolator_name"] = f"RotationInterpolator_{index}"
+            animation["scale_interpolator_name"] = f"ScaleInterpolator_{index}"
+            coordinate_indices = sorted(
+                animation.get("coordinate_values_by_index", {})
+            )
+            multiple_coordinate_shapes = len(coordinate_indices) > 1
+            animation["coordinate_names"] = {}
+            animation["coordinate_interpolator_names"] = {}
+            for material_index in coordinate_indices:
+                suffix = (
+                    f"_{material_index + 1}" if multiple_coordinate_shapes else ""
+                )
+                animation["coordinate_names"][material_index] = (
+                    f"AnimatedCoordinates_{index}{suffix}"
+                )
+                animation["coordinate_interpolator_names"][material_index] = (
+                    f"CoordinateInterpolator_{index}{suffix}"
+                )
+            material_indices = sorted(
+                animation.get("material_channels_by_index", {})
+            )
+            multiple_materials = len(material_indices) > 1
+            animation["material_names"] = {}
+            animation["material_interpolator_names"] = {}
+            for material_index in material_indices:
+                suffix = f"_{material_index + 1}" if multiple_materials else ""
+                animation["material_names"][material_index] = (
+                    f"AnimatedMaterial_{index}{suffix}"
+                )
+                animation["material_interpolator_names"][material_index] = {
+                    field: (
+                        f"ColorInterpolator_{index}{suffix}"
+                        if field == "diffuse_color"
+                        else f"{label}Interpolator_{index}{suffix}"
+                    )
+                    for field, label, _vrml_field in (
+                        _VRML2_ANIMATED_COLOR_FIELDS
+                        + _VRML2_ANIMATED_SCALAR_FIELDS
+                    )
+                }
+            animation["clock_name"] = f"AnimationClock_{index}"
+            animation["touch_name"] = f"AnimationTouch_{index}"
+            animation["visibility_switch_name"] = f"VisibilitySwitch_{index}"
+            animation["visibility_script_name"] = f"VisibilityScript_{index}"
+            animation.setdefault("has_coordinates", False)
+            animation.setdefault("has_material", False)
+            animation.setdefault("has_visibility", False)
+        fps_base = float(scene.render.fps_base)
+        if fps_base <= 0.0:
+            raise ValueError("Scene frame rate must be greater than zero")
+        frames_per_second = float(scene.render.fps) / fps_base
+        if frames_per_second <= 0.0:
+            raise ValueError("Scene frame rate must be greater than zero")
+        animation_cycle_interval = (
+            float(scene.frame_end - scene.frame_start) / frames_per_second
+        )
+    animations_by_object = {
+        id(animation["object"]): animation
+        for animation in transform_animations
+    }
 
     geometry_cache = {} if geometry_reuse != "OFF" else None
     mesh_data_counts = {}
@@ -1224,7 +2323,9 @@ def save(
     reused_geometry_count = 0
     base_dst = os.path.dirname(os.path.abspath(filepath)) or os.getcwd()
 
-    with open(filepath, "w", encoding="utf-8", newline="\n") as file:
+    with _temporary_scene_frame(scene, animation_frame), open(
+        filepath, "w", encoding="utf-8", newline="\n"
+    ) as file:
         fw = file.write
         fw("#VRML V2.0 utf8\n")
         fw("# Exported from Blender with the VRML2 Exporter extension\n")
@@ -1243,8 +2344,14 @@ def save(
                     geometry_group = None
                 else:
                     geometry_group = ("LINKED", mesh_key)
+            animation = animations_by_object.get(id(obj))
+            if animation is not None and animation["has_coordinates"]:
+                object_geometry_cache = None
+                geometry_group = None
+            object_buffer = io.StringIO() if animation is not None else None
+            object_writer = object_buffer.write if object_buffer is not None else fw
             reused_geometry_count += save_object(
-                fw,
+                object_writer,
                 global_matrix,
                 obj,
                 base_dst,
@@ -1259,7 +2366,67 @@ def save(
                 object_geometry_cache,
                 geometry_group,
                 two_sided_faces=two_sided_faces,
+                coordinate_name=(
+                    animation["coordinate_names"].get(0)
+                    if animation is not None and animation["has_coordinates"]
+                    else None
+                ),
+                coordinate_names=(
+                    animation["coordinate_names"]
+                    if animation is not None and animation["has_coordinates"]
+                    else None
+                ),
+                material_names=(
+                    animation["material_names"]
+                    if animation is not None and animation["has_material"]
+                    else None
+                ),
             )
+            if animation is not None:
+                fw(f"DEF {animation['transform_name']} Transform {{\n")
+                if animation["has_rotation"] or animation["has_scale"]:
+                    fw(
+                        "\tcenter %s %s %s\n"
+                        % tuple(
+                            _format_float(component, decimal_places)
+                            for component in animation["center"]
+                        )
+                    )
+                if animation["has_scale"]:
+                    fw(
+                        "\tscaleOrientation %s %s %s %s\n"
+                        % tuple(
+                            _format_float(component, decimal_places)
+                            for component in animation["scale_orientation"]
+                        )
+                    )
+                fw("\tchildren [\n")
+                if animation["has_visibility"]:
+                    initial_choice = 0 if animation["visibility_values"][0] else -1
+                    fw(
+                        f"\t\tDEF {animation['visibility_switch_name']} Switch {{\n"
+                    )
+                    fw(f"\t\t\twhichChoice {initial_choice}\n")
+                    fw("\t\t\tchoice [\n")
+                    fw(_indent_block(object_buffer.getvalue(), "\t\t\t\t"))
+                    fw("\t\t\t]\n")
+                    fw("\t\t}\n")
+                else:
+                    fw(_indent_block(object_buffer.getvalue(), "\t\t"))
+                if not animation_loop:
+                    fw(f"\t\tDEF {animation['touch_name']} TouchSensor {{ }}\n")
+                fw("\t]\n")
+                fw("}\n")
+
+        _write_transform_animations(
+            fw,
+            transform_animations,
+            animation_cycle_interval,
+            animation_loop,
+            decimal_places,
+            animation_play_together,
+            animation_start_automatically,
+        )
 
     if geometry_cache is not None:
         _remove_unused_geometry_defs(filepath, geometry_cache)
@@ -1273,6 +2440,34 @@ def save(
     message = f"Exported {len(mesh_objects)} mesh object(s) to VRML2"
     if reused_geometry_count:
         message += f"; reused {reused_geometry_count} geometries with DEF/USE"
+    if transform_animations:
+        location_count = sum(
+            animation["has_translation"] for animation in transform_animations
+        )
+        rotation_count = sum(
+            animation["has_rotation"] for animation in transform_animations
+        )
+        scale_count = sum(
+            animation["has_scale"] for animation in transform_animations
+        )
+        deformation_count = sum(
+            animation.get("has_coordinates", False)
+            for animation in transform_animations
+        )
+        material_count = sum(
+            animation.get("has_material", False)
+            for animation in transform_animations
+        )
+        visibility_count = sum(
+            animation.get("has_visibility", False)
+            for animation in transform_animations
+        )
+        message += (
+            f"; animated {len(transform_animations)} object transform(s)"
+            f" ({location_count} location, {rotation_count} rotation, "
+            f"{scale_count} scale, {deformation_count} deformation, "
+            f"{material_count} material, {visibility_count} visibility)"
+        )
     if wrz_path is not None:
         message += f"; created {os.path.basename(wrz_path)}"
     operator.report({"INFO"}, message)

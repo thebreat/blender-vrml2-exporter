@@ -2,6 +2,113 @@
 
 All notable changes to this maintained fork are recorded here.
 
+## 0.7.0-alpha.16.1 - 2026-10-09
+
+- Fixed **Start Automatically** for non-looping animation by routing the world's entry time to each animation clock.
+- Kept click-to-replay available after automatic playback, including synchronized animations.
+
+## 0.7.0-alpha.16 - 2026-10-08
+
+- Exported baked deformation from inverse kinematics rigs with multiple Material Studio regions.
+- Added a Blender integration scene with a two bone IK chain and animated target, checking both material regions and their VRML coordinate routes.
+- Kept armature controls in Blender while exporting the evaluated mesh movement to VRML.
+
+## 0.7.0-alpha.15 - 2026-10-07
+
+- Added an optional **Start Automatically** setting for non-looping animation.
+- Allowed one-shot animations to play when the WRL opens and remain replayable by clicking afterward.
+- Preserved stopped-until-clicked playback as the default.
+
+## 0.7.0-alpha.14 - 2026-10-06
+
+- Added an optional **Play Animations Together** export setting for synchronized click-to-play animation.
+- Routed every animated object's click sensor to one stopped shared clock when synchronization is enabled.
+- Preserved independent click clocks as the default and automatic shared looping when **Loop Animation** is enabled.
+
+## 0.7.0-alpha.13 - 2026-10-06
+
+- Added independent Material Studio animation for multiple material slots on one mesh object.
+- Routed every animated material field to the correct per-slot VRML Material while keeping one object clock and click target.
+- Added Blender integration coverage for simultaneous diffuse-color and transparency animation on two face regions.
+
+## 0.7.0-alpha.12 - 2026-10-06
+
+- Expanded sampled coordinate animation from shape keys and armatures to any enabled Blender modifier whose evaluated vertex count remains stable.
+- Added coverage for simultaneous animated Displace deformation and all six Material Studio fields on one object and one clock.
+- Continued skipping incompatible topology-changing deformation instead of exporting mismatched coordinate arrays.
+
+## 0.7.0-alpha.11 - 2026-10-06
+
+- Added sampled Blender render-visibility animation through VRML `Switch` nodes and standard VRML97 ECMAScript routing.
+- Kept visibility on each object's independent click clock in non-looping mode and on the shared clock in looping mode.
+- Added Blender integration coverage for a visible-to-hidden-to-visible object.
+
+## 0.7.0-alpha.10 - 2026-10-05
+
+- Gave every non-looping animated object its own VRML `TimeSensor` so clicking one object no longer starts every animation in the scene.
+- Kept looping exports on one shared clock so synchronized ambient animation still starts automatically and repeats together.
+- Added multi-object Blender coverage for independent click clocks and their routes.
+
+## 0.7.0-alpha.9 - 2026-10-05
+
+- Expanded VRML2 Material Studio animation to diffuse, emissive, and specular colors through `ColorInterpolator` nodes.
+- Added ambient intensity, shininess, and transparency animation through `ScalarInterpolator` nodes.
+- Added Blender integration coverage that independently keys and routes all six Material Studio fields.
+
+## 0.7.0-alpha.8.1 - 2026-10-05
+
+- Fixed diffuse color animation authored in VRML2 Material Studio by sampling its live `vrml2_material.diffuse_color` property instead of its static custom-property snapshot.
+- Kept the snapshot fallback for files exported while VRML2 Material Studio is disabled or unavailable.
+- Updated the Blender integration test to reproduce Material Studio animation with a deliberately stale snapshot value.
+
+## 0.7.0-alpha.8 - 2026-10-05
+
+- Added sampled diffuse material color animation through VRML `ColorInterpolator` nodes.
+- Animated Blender base colors and animated VRML2 Material Studio diffuse colors are supported on objects that export as one Shape with one material.
+- Reused the existing loop and click-to-play animation controls for material animation.
+- Added Blender integration coverage for a red-to-blue keyed material.
+
+## 0.7.0-alpha.7 - 2026-10-05
+
+- Added sampled Armature modifier deformation through VRML `CoordinateInterpolator` nodes for meshes whose evaluated vertex count remains stable.
+- Armature objects and bones remain Blender-side controls; the resulting animated mesh positions are baked into the VRML file.
+- Added a Blender integration test with a genuinely animated bone and fully weighted mesh.
+
+## 0.7.0-alpha.6 - 2026-10-05
+
+- Fixed shape-key animation being skipped when Blender changed a quad's triangulation diagonal as the shape deformed.
+- Added regression coverage using a deforming quad-based cube.
+
+## 0.7.0-alpha.5 - 2026-10-05
+
+- Added sampled shape-key deformation through VRML `CoordinateInterpolator` nodes for constant-topology, single-Shape meshes.
+- Kept animated coordinate geometry independent from DEF/USE geometry reuse so one object's deformation cannot alter another object.
+- Added adaptive coordinate-animation precision and Blender-side shape-key coverage.
+
+## 0.7.0-alpha.4 - 2026-10-05
+
+- Added sampled positive object-scale animation through VRML `PositionInterpolator` nodes routed to `Transform.set_scale`.
+- Preserved each object's starting rotation as the scale orientation so non-uniform scale animation follows Blender's local axes.
+- Added coverage for simultaneous location, rotation, and scale animation.
+
+## 0.7.0-alpha.3 - 2026-10-05
+
+- Made click-to-play one-shot playback the default and explicitly kept the VRML timer inactive until an animated object is clicked.
+
+## 0.7.0-alpha.2 - 2026-10-04
+
+- Added sampled mesh-object rotation animation through VRML `OrientationInterpolator` nodes.
+- Combined location and rotation animation around each object's starting world-space pivot, preventing animated objects from orbiting the scene origin.
+- Added adaptive rotation precision and Blender-side coverage for simultaneous location and rotation animation.
+- Included the 0.6.3 Blender Extensions packaging exclusions in the animation branch.
+
+## 0.7.0-alpha.1 - 2026-09-10
+
+- Added the first animation alpha with optional mesh-object location animation over Blender's scene frame range.
+- Added a shared VRML `TimeSensor`, per-object `PositionInterpolator` nodes, continuous looping or click-to-play one-shot playback, and configurable frame sampling.
+- Preserved the user's current Blender timeline frame after animation export.
+- Kept animation disabled by default so existing static exports remain unchanged.
+
 ## 0.6.3 - 2026-10-02
 
 - Excluded automated tests and development-only validation documentation from distributable extension packages.

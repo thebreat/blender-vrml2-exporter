@@ -1,6 +1,6 @@
 # Validation notes
 
-The source archive includes a Blender-free smoke test for package imports and the VRML writer's point-color, corner-color, single- and multiple-material color, VRML2 Material Studio fields, UV, texture-path, texture path-mode handling, textured-Shape lighting, one- and two-sided face output, index-output, linked-group separation, unused-DEF cleanup, DEF/USE geometry reuse, shade-smoothing angle conversion, manually marked sharp-edge selection, smoothing-aware geometry separation, mirrored-transform winding correction, safe geometry/UV rounding, UV deduplication, compact output, and WRZ compression branches.
+The source archive includes a Blender-free smoke test for package imports and the VRML writer's point-color, corner-color, single- and multiple-material color, VRML2 Material Studio fields, UV, texture-path, texture path-mode handling, textured-Shape lighting, one- and two-sided face output, location-, rotation-, scale-, and coordinate-animation nodes, animation frame sampling, index-output, linked-group separation, unused-DEF cleanup, DEF/USE geometry reuse, shade-smoothing angle conversion, manually marked sharp-edge selection, smoothing-aware geometry separation, mirrored-transform winding correction, safe geometry/UV rounding, UV deduplication, compact output, and WRZ compression branches.
 
 Run it from the project root:
 
@@ -28,7 +28,36 @@ Run the texture path-mode and Shape lighting checks inside Blender with:
 blender --background --factory-startup --python tests/blender_export_correctness_test.py
 ```
 
-That check needs Blender because it exercises the real
+Run the transform-animation alpha check inside Blender with:
+
+```bash
+blender --background --factory-startup --python tests/blender_location_animation_integration_test.py
+```
+
+This check covers object location, rotation, and scale; shape-key and Armature
+modifier coordinate animation; all six VRML2 Material Studio animation fields;
+independent and synchronized non-looping click clocks for multiple objects;
+world-entry sensor routes for optional one-shot playback on load; and discrete
+render visibility animation. Automatic playback must also be checked in a VRML
+viewer because these tests verify exported nodes and routes, not viewer timing.
+
+Run the IK animation check inside Blender with:
+
+```bash
+blender --background --factory-startup --python tests/blender_ik_animation_integration_test.py
+```
+
+This creates a real two bone IK chain, animates its target, and checks that both
+material regions receive coordinate animation on the same click clock. Pass a
+Blender file path after `--` to save the test scene as a reusable example.
+
+The coordinate-animation coverage also combines an animated Displace modifier
+with Material Studio animation on the same object.
+
+Material animation coverage includes two independently animated Material Studio
+slots assigned to different faces of one object.
+
+The export-correctness check needs Blender because it exercises the real
 `bpy_extras.io_utils.path_reference` resolution for every path mode, against an
 absolute texture outside the export directory, an absolute texture inside it, and
 a Blender-relative `//` texture path. `Match` in particular can only be tested
